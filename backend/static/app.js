@@ -35,14 +35,7 @@ document.getElementById('subtab-mz').addEventListener('click', () => setQueryTyp
 document.getElementById('subtab-chem').addEventListener('click', () => setQueryType('chemical', 'subtab-chem', 'inputs-chem'));
 document.getElementById('subtab-ec').addEventListener('click', () => setQueryType('ec', 'subtab-ec', 'inputs-ec'));
 
-document.getElementById('tab-batch').addEventListener('click', (e) => {
-    e.target.classList.add('active');
-    document.getElementById('tab-single').classList.remove('active');
-    document.getElementById('pipeline-form').style.display = 'none';
-    document.getElementById('batch-form').style.display = 'block';
-    document.getElementById('tracker-section').style.display = 'none';
-    document.getElementById('results-section').style.display = 'none';
-});
+
 
 let currentSingleResult = null;
 
