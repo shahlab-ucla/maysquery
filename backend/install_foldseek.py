@@ -25,8 +25,10 @@ def install_foldseek():
     archive_ext = ""
     
     if sys_plat == "windows":
-        url = "https://mmseqs.com/foldseek/foldseek-windows-avx2.zip"
-        archive_ext = ".zip"
+        print("\nFoldseek does not provide native pre-compiled Windows binaries.")
+        print("To use Foldseek on Windows, please install it via Windows Subsystem for Linux (WSL).")
+        print("Falling back to mock structural validation scores for now.")
+        return False
     elif sys_plat == "darwin": # macOS
         url = "https://mmseqs.com/foldseek/foldseek-mac-universal.tar.gz"
         archive_ext = ".tar.gz"
@@ -38,13 +40,13 @@ def install_foldseek():
         return False
         
     tmp_archive = os.path.join(os.path.dirname(__file__), f"foldseek_tmp{archive_ext}")
+    extract_dir = os.path.join(os.path.dirname(__file__), "foldseek_extracted")
+    
     print(f"Downloading Foldseek from {url}...")
     
     try:
         urllib.request.urlretrieve(url, tmp_archive)
         print("Download complete. Extracting...")
-        
-        extract_dir = os.path.join(os.path.dirname(__file__), "foldseek_extracted")
         os.makedirs(extract_dir, exist_ok=True)
         
         if archive_ext == ".zip":

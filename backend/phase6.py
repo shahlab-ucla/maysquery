@@ -3,8 +3,8 @@ import logging
 import os
 import random
 import asyncio
-from typing import List, Optional
-from models import ValidatedTarget, DomainValidatedTarget
+from typing import List, Optional, Dict
+from models import ValidatedTarget, OrthologMapping, DomainValidatedTarget, ExecutionLogEntry
 from phase5 import download_alphafold_pdb, get_uniprot_for_maize_gene
 
 logger = logging.getLogger(__name__)
@@ -135,18 +135,34 @@ async def process_domain_target(target: ValidatedTarget, query_uniprot_id: str) 
         domain_tm_score=tm_score
     )
 
-async def execute_phase6(validated_targets: List[ValidatedTarget], orthologs: List[dict]) -> List[DomainValidatedTarget]:
+async def execute_phase6(targets: List[ValidatedTarget], mappings: List[OrthologMapping], logs: List[ExecutionLogEntry] = None) -> List[DomainValidatedTarget]:
+    if logs is None:
+        logs = []
     """
     Executes Phase 6: Queries InterPro for domain boundaries and runs domain-specific Foldseek alignment.
     """
-    # Create mapping of maize_gene -> query_uniprot_id from Phase 4 results
-    mapping = {o.maize_gene_model: o.query_uniprot_id for o in orthologs}
-    
+    mapping = {o.maize_gene_model: o.query_uniprot_id for o in mappings}
+
+    logs.append(ExecutionLogEntry(
+        phase=6, database="InterPro Pfam API", status="info", hits=0,
+        message=f"Slicing Pfam domains and running domain-level Foldseek for {len(targets)} validated targets"
+    ))
+
     tasks = []
-    for t in validated_targets:
+    for t in targets:
         query_id = mapping.get(t.maize_gene_model)
         if query_id:
             tasks.append(process_domain_target(t, query_id))
-            
+
     results = await asyncio.gather(*tasks)
-    return [r for r in results if r is not None]
+    domain_targets = [r for r in results if r is not None]
+
+    logs.append(ExecutionLogEntry(
+        phase=6,
+        database="InterPro/Pfam + Foldseek",
+        status="success" if domain_targets else "warning",
+        hits=len(domain_targets),
+        message=f"Domain-validated {len(domain_targets)}/{len(targets)} targets"
+        + (f" (top: {domain_targets[0].pfam_domain_name} TM={domain_targets[0].domain_tm_score:.2f})" if domain_targets else "")
+    ))
+    return domain_targets

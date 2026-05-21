@@ -1,3 +1,5 @@
+import sys
+import phase3
 from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -5,15 +7,12 @@ import os
 import csv
 import io
 from contextlib import asynccontextmanager
-from models import MetaboliteInput, ValidatedTarget
+from models import MetaboliteInput, ValidatedTarget, OrthologMapping, PipelineConfig
 from typing import List
-from install_foldseek import check_and_prompt_foldseek
 from report_generator import generate_csv_report, generate_html_report, save_report, REPORTS_DIR
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Prompt for foldseek installation on server startup
-    check_and_prompt_foldseek()
     yield
 
 app = FastAPI(title="Metabolite-to-Gene Pipeline API", lifespan=lifespan)
@@ -34,42 +33,278 @@ from phase3 import execute_phase3, execute_phase3_by_ec
 from phase4 import execute_phase4
 from phase5 import execute_phase5
 from phase6 import execute_phase6
+from phase7 import execute_phase7
+from models import ExecutionLogEntry
 
-async def run_single_pipeline(input_data: MetaboliteInput) -> dict:
+import asyncio
+import json
+from fastapi.responses import StreamingResponse
+
+class StreamingLogList:
+    def __init__(self, queue: asyncio.Queue):
+        self.queue = queue
+        self.items = []
+
+    def append(self, entry: ExecutionLogEntry):
+        self.items.append(entry)
+        self.queue.put_nowait({"type": "log", "entry": entry.model_dump()})
+        
+    def __iter__(self):
+        return iter(self.items)
+
+    def __len__(self):
+        return len(self.items)
+
+async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dict:
     chemical_entity = None
     reactions = []
     proteins = []
     orthologs = []
     targets = []
+    unvalidated_targets = []
     domain_targets = []
-    
+    advanced_homology_targets = []
+
+    cfg = input_data.pipeline_config or PipelineConfig()
+    # Mirror config into the top-level legacy fields so existing phase code paths
+    # (and tests that read input_data.hmmer_e_value / .tolerance_ppm directly)
+    # see the same values the user set in the Configuration tab.
+    input_data.hmmer_e_value = cfg.hmmer_e_value
+    input_data.tolerance_ppm = cfg.cmm_tolerance_ppm
+
+    top_n = cfg.enrichment_top_n
+
     if input_data.query_type == "mz":
-        chemical_entity = await execute_phase1(input_data)
-        reactions = await execute_phase2(chemical_entity)
-        proteins = await execute_phase3(chemical_entity, reactions)
-        orthologs = await execute_phase4(proteins)
-        targets = await execute_phase5(orthologs)
+        chemical_entity = await execute_phase1(input_data, logs=execution_logs)
+        reactions = await execute_phase2(chemical_entity, logs=execution_logs, config=cfg)
+        proteins = await execute_phase3(chemical_entity, reactions, logs=execution_logs, config=cfg)
+        orthologs = await execute_phase4(proteins, input_data, logs=execution_logs, config=cfg)
     elif input_data.query_type == "chemical":
-        chemical_entity = await fetch_chemical_entity_by_name(input_data.chemical_name)
-        reactions = await execute_phase2(chemical_entity)
-        proteins = await execute_phase3(chemical_entity, reactions)
-        orthologs = await execute_phase4(proteins)
-        targets = await execute_phase5(orthologs)
+        chemical_entity = await fetch_chemical_entity_by_name(input_data.chemical_name, logs=execution_logs)
+        reactions = await execute_phase2(chemical_entity, logs=execution_logs, config=cfg)
+        proteins = await execute_phase3(chemical_entity, reactions, logs=execution_logs, config=cfg)
+        orthologs = await execute_phase4(proteins, input_data, logs=execution_logs, config=cfg)
     elif input_data.query_type == "ec":
-        proteins = await execute_phase3_by_ec(input_data.ec_number)
-        orthologs = await execute_phase4(proteins)
-        targets = await execute_phase5(orthologs)
-        
-    domain_targets = await execute_phase6(targets, orthologs)
-        
+        proteins = await execute_phase3_by_ec(input_data.ec_number, logs=execution_logs, config=cfg)
+        orthologs = await execute_phase4(proteins, input_data, logs=execution_logs, config=cfg)
+
+    # Phase 5 now handles ALL orthologs internally:
+    #  - Top `enrichment_top_n` sequence-only hits get the expensive 1-to-1 Foldseek
+    #  - Consensus / structure-only hits reuse the Phase 4.5 TM (no duplicated work)
+    #  - Everything else still gets pLDDT + Gramene expression breadth (cheap)
+    targets = await execute_phase5(orthologs, logs=execution_logs, config=cfg)
+    # "Unvalidated" now = orthologs that didn't survive the Phase 5 filter
+    enriched_gene_ids = {t.maize_gene_model for t in targets}
+    unvalidated_targets = [o for o in orthologs if o.maize_gene_model not in enriched_gene_ids]
+
+    # Phase 6 (Pfam-sliced domain Foldseek) and Phase 7 (Compara) are expensive
+    # per-target — keep them on the top-N enriched targets only.
+    primary_targets = [t for t in targets if t.enrichment_kind == "full"][:top_n]
+    primary_mappings = [o for o in orthologs[:top_n] if o.maize_gene_model in {t.maize_gene_model for t in primary_targets}]
+    domain_targets = await execute_phase6(primary_targets, primary_mappings, logs=execution_logs)
+    advanced_homology_targets = await execute_phase7(primary_targets, logs=execution_logs, config=cfg)
+
+    # Batched lookup of human-readable gene metadata (symbol + description) for every
+    # maize gene ID surfaced anywhere in the pipeline. Powers the
+    # "Zm00001eb117970 · sdh4 — succinate dehydrogenase4" labels in the UI/reports.
+    from maize_gene_meta import fetch_maize_gene_meta_batch
+    unique_gene_ids = set()
+    for o in orthologs:                  unique_gene_ids.add(o.maize_gene_model)
+    for t in targets:                    unique_gene_ids.add(t.maize_gene_model)
+    for d in domain_targets:             unique_gene_ids.add(d.maize_gene_model)
+    for a in advanced_homology_targets:  unique_gene_ids.add(a.maize_gene_model)
+    if unique_gene_ids:
+        execution_logs.append(ExecutionLogEntry(
+            phase=4, database="Gramene gene metadata", status="info", hits=0,
+            message=f"Resolving symbol + description for {len(unique_gene_ids)} unique maize gene IDs",
+        ))
+    maize_gene_metadata = await fetch_maize_gene_meta_batch(unique_gene_ids)
+    if unique_gene_ids:
+        n_named = sum(1 for v in maize_gene_metadata.values() if v.get("symbol") or v.get("description"))
+        sample = next(iter(maize_gene_metadata.values()), None)
+        sample_label = ""
+        if sample:
+            sym, desc = sample.get("symbol", ""), sample.get("description", "")
+            sample_label = f" (e.g. '{sym} — {desc}')" if (sym and desc) else ""
+        execution_logs.append(ExecutionLogEntry(
+            phase=4, database="Gramene gene metadata",
+            status="success" if n_named else "warning",
+            hits=n_named,
+            message=f"{n_named}/{len(unique_gene_ids)} maize genes resolved{sample_label}",
+        ))
+
     return {
         "input_data": input_data.model_dump(),
         "chemical_entity": chemical_entity.model_dump() if chemical_entity else None,
         "reactions": [r.model_dump() for r in reactions],
         "proteins": [p.model_dump() for p in proteins],
         "orthologs": [o.model_dump() for o in orthologs],
+        "unvalidated_targets": [o.model_dump() for o in unvalidated_targets],
         "targets": [t.model_dump() for t in targets],
-        "domain_targets": [d.model_dump() for d in domain_targets]
+        "domain_targets": [d.model_dump() for d in domain_targets],
+        "advanced_homology_targets": [a.model_dump() for a in advanced_homology_targets],
+        "maize_gene_metadata": maize_gene_metadata,
+        "execution_logs": [l.model_dump() for l in execution_logs]
+    }
+
+async def run_single_pipeline(input_data: MetaboliteInput) -> dict:
+    execution_logs: List[ExecutionLogEntry] = []
+    return await _run_pipeline_core(input_data, execution_logs)
+
+@app.post("/api/run_pipeline/stream")
+async def run_pipeline_stream(input_data: MetaboliteInput):
+    """
+    Streams pipeline progress as Server-Sent Events.
+    Each event is a JSON object on a `data:` line:
+      {"type": "log",    "entry": {phase, database, status, hits, message, timestamp}}
+      {"type": "result", "data": {...full pipeline result...}}
+      {"type": "error",  "message": "...", "exception": "ClassName"}
+      {"type": "done"}
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    logs = StreamingLogList(queue)
+
+    async def run_and_finish():
+        import traceback
+        try:
+            result = await _run_pipeline_core(input_data, logs)
+            await queue.put({"type": "result", "data": result})
+        except Exception as e:
+            tb = traceback.format_exc()
+            await queue.put({
+                "type": "error",
+                "message": str(e) or repr(e),
+                "exception": type(e).__name__,
+                "traceback": tb,
+            })
+        finally:
+            await queue.put({"type": "done"})
+
+    task = asyncio.create_task(run_and_finish())
+
+    async def gen():
+        try:
+            while True:
+                msg = await queue.get()
+                yield f"data: {json.dumps(msg)}\n\n"
+                if msg.get("type") == "done":
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+@app.get("/api/pipeline_config/schema")
+def pipeline_config_schema():
+    """
+    Defaults + per-field descriptions (drawn from the Pydantic Field metadata)
+    so the Configuration tab can render labels, help text, and validation
+    bounds without duplicating them in JS.
+    """
+    fields = []
+    for name, info in PipelineConfig.model_fields.items():
+        # Extract numeric bounds out of Pydantic's constraint metadata
+        ge = le = gt = lt = None
+        for meta in getattr(info, "metadata", []) or []:
+            for attr in ("ge", "le", "gt", "lt"):
+                v = getattr(meta, attr, None)
+                if v is not None:
+                    locals_ = {"ge": ge, "le": le, "gt": gt, "lt": lt}
+                    locals_[attr] = v
+                    ge, le, gt, lt = locals_["ge"], locals_["le"], locals_["gt"], locals_["lt"]
+        annotation = info.annotation
+        type_name = getattr(annotation, "__name__", str(annotation))
+        fields.append({
+            "name": name,
+            "default": info.default,
+            "description": info.description or "",
+            "type": type_name,
+            "ge": ge, "le": le, "gt": gt, "lt": lt,
+        })
+    return {"fields": fields, "defaults": PipelineConfig().model_dump()}
+
+
+@app.get("/api/maize_afdb/status")
+def maize_afdb_status():
+    """Report whether the Foldseek-indexed maize AlphaFold DB is ready."""
+    from install_maize_afdb import get_status
+    return get_status()
+
+
+@app.post("/api/maize_afdb/install")
+async def maize_afdb_install():
+    """
+    Trigger the maize AlphaFold download + Foldseek index build, streaming
+    progress as Server-Sent Events. Safe to call when already built (will
+    short-circuit and emit a single `complete` event).
+
+    Event shapes:
+      {"type": "progress", "message": "...", "stage": "download|extract|index", "pct": 0..100}
+      {"type": "complete"}
+      {"type": "error", "message": "..."}
+      {"type": "done"}
+    """
+    from install_maize_afdb import ensure_db_ready, is_db_ready
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def progress_cb(message, stage=None, pct=None):
+        await queue.put({"type": "progress", "message": message, "stage": stage, "pct": pct})
+
+    async def run_install():
+        try:
+            ok = await ensure_db_ready(interactive=False, progress_callback=progress_cb)
+            if ok:
+                await queue.put({"type": "complete"})
+            else:
+                await queue.put({"type": "error", "message": "Install did not complete; check server logs."})
+        except Exception as e:
+            await queue.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
+        finally:
+            await queue.put({"type": "done"})
+
+    if is_db_ready():
+        async def short_gen():
+            yield f"data: {json.dumps({'type':'complete','message':'Already built.'})}\n\n"
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
+        return StreamingResponse(short_gen(), media_type="text/event-stream")
+
+    task = asyncio.create_task(run_install())
+
+    async def gen():
+        try:
+            while True:
+                msg = await queue.get()
+                yield f"data: {json.dumps(msg)}\n\n"
+                if msg.get("type") == "done":
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/validate_target")
+async def validate_target(mapping: OrthologMapping):
+    logs = []
+    targets = await execute_phase5([mapping], logs=logs)
+    domain_targets = await execute_phase6(targets, [mapping], logs=logs)
+    advanced_homology_targets = await execute_phase7(targets, logs=logs)
+    return {
+        "target": targets[0].model_dump() if targets else None,
+        "domain_target": domain_targets[0].model_dump() if domain_targets else None,
+        "advanced_homology_target": advanced_homology_targets[0].model_dump() if advanced_homology_targets else None,
+        "execution_logs": [l.model_dump() for l in logs]
     }
 
 @app.post("/api/run_pipeline")
@@ -80,6 +315,13 @@ async def run_pipeline(input_data: MetaboliteInput):
 def download_template():
     content = "mz,mode,adducts,tolerance_ppm\n117.0188,negative,M-H,5.0\n"
     return PlainTextResponse(content, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=batch_template.csv"})
+
+@app.get("/api/debug")
+def get_debug():
+    import phase3
+    import sys
+    import json
+    return {"phase3_file": phase3.__file__, "sys_path": sys.path}
 
 @app.post("/api/batch")
 async def run_batch(file: UploadFile = File(...)):
