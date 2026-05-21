@@ -90,8 +90,16 @@ document.getElementById('pipeline-form').addEventListener('submit', async (e) =>
             body: JSON.stringify(payload)
         });
         
-        if (!response.ok) throw new Error('Pipeline failed');
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`Pipeline failed (Status ${response.status}): ${JSON.stringify(errData)}`);
+        }
         const data = await response.json();
+        
+        if (!data || !data.input_data) {
+            throw new Error('Server returned malformed data: ' + JSON.stringify(data));
+        }
+        
         currentSingleResult = data;
         
         renderResults(data);
