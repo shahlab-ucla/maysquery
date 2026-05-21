@@ -15,6 +15,24 @@ Maysquery is an automated, high-throughput pipeline designed to map untargeted m
 - Python 3.9+
 - Foldseek binary installed and available on your system PATH (`foldseek`).
 
+### Installing Foldseek
+Foldseek is strictly required for the 3D structural homology validations performed in Phases 5 and 6. 
+
+**Option A: Conda/Mamba (Recommended)**
+```bash
+conda install -c conda-forge -c bioconda foldseek
+```
+
+**Option B: Precompiled Binaries**
+```bash
+# Download and extract the latest release for your platform from GitHub
+# Example for Linux:
+wget https://mmseqs.com/foldseek/foldseek-linux-sse2.tar.gz
+tar xvzf foldseek-linux-sse2.tar.gz
+export PATH=$(pwd)/foldseek/bin/:$PATH
+```
+*Note: The backend includes an `install_foldseek.py` utility that the server attempts to run on startup if the binary is missing, but manual installation is recommended.*
+
 ### Setup
 1. Clone the repository:
    ```bash
