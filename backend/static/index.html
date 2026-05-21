@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Metabolite-to-Gene Pipeline</title>
-    <link rel="stylesheet" href="/static/style.css?v=2">
+    <link rel="stylesheet" href="/static/style.css?v=10">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
     <script src="https://unpkg.com/dagre@0.7.4/dist/dagre.js"></script>
@@ -21,6 +21,7 @@
             <section class="input-section glass-panel">
                 <div class="tabs">
                     <button class="tab-btn active" id="tab-single">Single Query</button>
+                    <button class="tab-btn" id="tab-config">Configuration</button>
                     <button class="tab-btn" id="tab-batch">Batch Processing</button>
                 </div>
 
@@ -38,8 +39,8 @@
                         <!-- m/z Inputs -->
                         <div id="inputs-mz">
                             <div class="form-group">
-                                <label for="mz">m/z Value:</label>
-                                <input type="number" step="0.0001" id="mz" placeholder="e.g., 115.0037">
+                                <label for="mz_value">m/z Value:</label>
+                                <input type="number" step="0.0001" id="mz_value" placeholder="e.g., 115.0037">
                             </div>
                             <div class="form-group">
                                 <label for="mode">Ion Mode:</label>
@@ -62,12 +63,35 @@
                         <div id="inputs-ec" style="display: none;">
                             <div class="form-group">
                                 <label for="ec_number">EC Number:</label>
+                                <small class="help-text">Specific EC code (e.g. 4.2.1.2)</small>
                                 <input type="text" id="ec_number" placeholder="e.g., 4.2.1.2">
                             </div>
                         </div>
 
-                        <button type="submit" class="btn-glow">Run Pipeline</button>
+                        <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #334155;">
+                            <small class="help-text">
+                                Cutoffs, caps, and thresholds (HMMER E-value, TM thresholds, per-DB limits, pLDDT filter, …)
+                                live in the <a href="#" id="open-config-link" style="color: var(--accent);">Configuration</a> tab.
+                            </small>
+                        </div>
+
+                        <button type="submit" class="btn-glow" style="margin-top: 25px;">Run Pipeline</button>
                     </form>
+                </div>
+
+                <!-- Configuration -->
+                <div id="config-form-container" class="tab-content" style="display: none;">
+                    <div class="config-header">
+                        <p class="config-description">
+                            Tune the discovery pipeline's cutoffs, caps, and thresholds. Changes
+                            auto-save in your browser (localStorage) and apply to every subsequent
+                            pipeline run.
+                        </p>
+                        <button type="button" id="config-reset-all" class="config-reset-all-btn">Reset all to defaults</button>
+                    </div>
+                    <div id="config-sections" class="config-sections">
+                        <div class="config-loading">Loading configuration schema…</div>
+                    </div>
                 </div>
 
                 <!-- Batch Processing Form -->
@@ -89,14 +113,35 @@
             </section>
 
             <section class="tracker-section glass-panel" id="tracker-section">
+                <div id="maize-afdb-banner" class="afdb-banner afdb-banner-loading" style="display:none;">
+                    <div class="afdb-banner-icon" id="afdb-banner-icon">⏳</div>
+                    <div class="afdb-banner-body">
+                        <div class="afdb-banner-title" id="afdb-banner-title">Checking structural-discovery index…</div>
+                        <div class="afdb-banner-detail" id="afdb-banner-detail"></div>
+                    </div>
+                    <button type="button" id="afdb-install-btn" class="btn-glow afdb-install-btn" style="display:none;">Build Index</button>
+                </div>
+
                 <h2>Pipeline Tracker</h2>
                 <div class="pipeline-tracker">
-                    <div class="step" id="step-1">1. Metabolite<br>Resolution</div>
-                    <div class="step" id="step-2">2. Reaction<br>Networks</div>
-                    <div class="step" id="step-3">3. Protein<br>Pool</div>
-                    <div class="step" id="step-4">4. Homology<br>Search</div>
-                    <div class="step" id="step-5">5. Structural<br>Validation</div>
-                    <div class="step" id="step-6">6. Domain<br>Validation</div>
+                    <div class="step" id="step-1"><span class="step-num">1</span><span class="step-label">Metabolite<br>Resolution</span></div>
+                    <div class="step" id="step-2"><span class="step-num">2</span><span class="step-label">Reaction<br>Networks</span></div>
+                    <div class="step" id="step-3"><span class="step-num">3</span><span class="step-label">Protein<br>Pool</span></div>
+                    <div class="step" id="step-4"><span class="step-num">4</span><span class="step-label">Homology<br>Search</span></div>
+                    <div class="step" id="step-5"><span class="step-num">5</span><span class="step-label">Structural<br>Validation</span></div>
+                    <div class="step" id="step-6"><span class="step-num">6</span><span class="step-label">Domain<br>Validation</span></div>
+                    <div class="step" id="step-7"><span class="step-num">7</span><span class="step-label">Advanced<br>Homology</span></div>
+                </div>
+
+                <div class="terminal-wrap" id="terminal-wrap" style="display:none;">
+                    <div class="terminal-header">
+                        <span class="terminal-dot dot-red"></span>
+                        <span class="terminal-dot dot-yellow"></span>
+                        <span class="terminal-dot dot-green"></span>
+                        <span class="terminal-title">pipeline.log</span>
+                        <button type="button" id="terminal-clear" class="terminal-clear-btn">clear</button>
+                    </div>
+                    <pre id="terminal-output" class="terminal-output" aria-live="polite"></pre>
                 </div>
             </section>
 
@@ -108,18 +153,51 @@
                         <button id="dl-single-csv" class="badge" style="background:#8b5cf6; color:#fff; cursor:pointer; border:none;">📊 CSV Report</button>
                     </div>
                 </div>
-                <div class="network-legend" style="margin-bottom: 15px; font-size: 0.85rem; display: flex; gap: 15px; flex-wrap: wrap;">
-                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#f87171; clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);"></span> m/z Query</span>
-                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#818cf8; border-radius:50%;"></span> Chemical Entity</span>
-                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#34d399; border-radius:3px;"></span> Reaction</span>
-                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:14px; height:12px; background:#fbbf24; clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);"></span> Protein</span>
-                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#c084fc; clip-path:polygon(50% 0%, 0% 100%, 100% 100%);"></span> Maize Gene</span>
+                <details class="drill" id="network-graph-details">
+                    <summary class="drill-summary">
+                        <span class="drill-caret"></span>
+                        <span class="drill-title">Pathway network graph <span class="detail-count">m/z → ChEBI → reactions → proteins → top maize hits (capped to keep readable)</span></span>
+                    </summary>
+                    <div class="drill-body">
+                        <div class="network-legend" style="margin-bottom: 12px; font-size: 0.82rem; display: flex; gap: 14px; flex-wrap: wrap;">
+                            <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#f87171; clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);"></span> m/z Query</span>
+                            <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#818cf8; border-radius:50%;"></span> Chemical Entity</span>
+                            <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#34d399; border-radius:3px;"></span> Reaction</span>
+                            <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:14px; height:12px; background:#fbbf24; clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);"></span> Protein</span>
+                            <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#c084fc; clip-path:polygon(50% 0%, 0% 100%, 100% 100%);"></span> Maize Gene</span>
+                        </div>
+                        <div id="cy" class="network-graph"></div>
+                    </div>
+                </details>
+                <div id="dashboard-container" class="dashboard-container hidden">
+                    <!-- Results injected here -->
                 </div>
-                <div id="cy" class="network-graph"></div>
-                <div id="dashboard-container"></div>
+                
+                <details id="unvalidated-container" class="drill hidden" style="margin-top: 20px;">
+                    <summary class="drill-summary">
+                        <span class="drill-caret"></span>
+                        <span class="drill-title">Additional Homologs (Pending Enrichment) <span id="unval-count-badge" class="detail-count"></span></span>
+                    </summary>
+                    <div class="drill-body">
+                        <p style="color: #94a3b8; font-size: 0.85rem; margin: 0 0 12px;">Homologs found by Phase 4 / 4.5 discovery that didn't survive the pLDDT/expression filter (or are sequence-only and below the top-N cutoff). Run on-demand 1-to-1 Foldseek + full enrichment from here.</p>
+                        <div class="bulk-validate-toolbar" id="bulk-toolbar">
+                            <div class="bulk-validate-group">
+                                <label for="bulk-validate-n" class="bulk-label">Run top</label>
+                                <input type="number" id="bulk-validate-n" min="1" value="5" class="bulk-num">
+                                <button type="button" id="bulk-validate-n-btn" class="btn-glow bulk-btn">Validate Top N</button>
+                            </div>
+                            <button type="button" id="bulk-validate-all-btn" class="btn-glow bulk-btn">Validate All</button>
+                            <div class="bulk-progress" id="bulk-progress"></div>
+                        </div>
+                        <div id="unvalidated-list" style="display: flex; flex-direction: column; gap: 10px;">
+                            <!-- Unvalidated targets injected here -->
+                        </div>
+                    </div>
+                </details>
+
             </section>
         </main>
     </div>
-    <script src="/static/app.js?v=9"></script>
+    <script src="/static/app.js?v=19"></script>
 </body>
 </html>
