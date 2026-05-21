@@ -9,3 +9,17 @@ backend/tmpFolder/
 backend/reports/
 backend/uploads/
 .DS_Store
+
+# Data assets — built/downloaded at runtime, can be many GB
+backend/data/
+backend/foldseek_extracted/
+backend/foldseek_tmp*
+
+# SQLAlchemy stub DB
+backend/sql_app.db
+
+# One-off probe / debug scripts (not part of the test suite)
+backend/test_ensembl.py
+backend/test_uniprot.py
+backend/test_phase7_direct.py
+backend/test_phase7_parser.py

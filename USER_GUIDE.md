@@ -1,59 +1,336 @@
-# Maysquery User Guide
+# Maysquery — User Guide
 
-Maysquery automates the complex bioinformatics workflow required to trace a putative metabolite feature back to a specific candidate gene in *Zea mays*. This guide details the 6-phase pipeline, the data sources queried, and the fallback strategies employed to ensure robustness.
+This document covers the eight pipeline phases, the data sources each one
+queries, the configuration knobs, and the shape of the report output. For
+install instructions see [INSTALLATION.md](INSTALLATION.md).
 
-## 1. Input Modes
+---
 
-Maysquery supports three primary entry points, allowing flexibility depending on what data you already have:
+## 1. Input modes
 
-*   **m/z Value:** The standard starting point for untargeted metabolomics. Requires an m/z float, ionization mode (positive/negative), and adducts. Triggers the full 6-phase pipeline.
-*   **Chemical Name:** Bypasses Phase 1 (m/z resolution) and starts directly by looking up the chemical structure in PubChem.
-*   **EC Number:** Bypasses Phases 1 and 2. Directly searches UniProt for proteins annotated with the given Enzyme Commission number (e.g., 4.2.1.2) to find maize orthologs.
+The Single Query tab offers three entry points:
 
-## 2. Pipeline Phases & Database Queries
+| Mode | Bypasses | Starts at |
+|---|---|---|
+| **m/z value** | none | Phase 1 — CMM mass lookup |
+| **Chemical name** | Phase 1 | PubChem name → CID → ChEBI |
+| **EC number** | Phases 1 + 2 | UniProt direct EC search |
 
-### Phase 1: Chemical Entity Standardization
-**Goal:** Resolve an m/z value into a specific chemical entity with a defined mass, structure, and database identifiers.
-*   **Primary Database:** CEU Mass Mediator (CMM) API. Used to predict the most likely metabolite name based on m/z, adducts, and tolerance.
-*   **Fallback Strategy:** If CMM is down (e.g., returns a 500 error), the pipeline automatically falls back to the **Metabolomics Workbench (MW) REST API** (`moverz` endpoint) to resolve the feature.
-*   **Standardization:** Once a name is resolved, the pipeline queries **PubChem (PUG-REST)** to retrieve the CID, SMILES string, and Monoisotopic Mass. It then cross-references PubChem to find the **ChEBI ID**.
+A **Batch Processing** tab accepts a CSV (template downloadable from the
+tab) and runs each row sequentially, emitting an aggregate HTML + CSV
+report at the end.
 
-### Phase 2: Reaction Networks
-**Goal:** Identify the biochemical reactions in which the chemical entity participates.
-*   **Primary Database:** **Rhea SPARQL Endpoint**.
-*   **Query Logic:** The pipeline uses the resolved ChEBI ID to query Rhea for all metabolic and transport reactions involving that compound. It flags whether the reaction is a transport event and retrieves associated pathway names.
+---
 
-### Phase 3: Protein Pool (Pan-life)
-**Goal:** Gather a list of proteins (from any organism) known to catalyze the identified reactions.
-*   **Primary Database:** **UniProt REST API**.
-*   **Query Logic:**
-    *   **Enzymes:** Searches UniProt using the specific Rhea IDs found in Phase 2 (`rhea:"RHEA:XXXX"`).
-    *   **Transporters & Receptors:** Falls back to searching UniProt using the ChEBI ID combined with specific UniProt keywords (e.g., `KW-0813` for transport, `KW-0675` for receptors).
-    *   **Fallback:** If Phase 1/2 are bypassed via "EC Number" input, UniProt is queried directly using `ec:X.X.X.X`.
+## 2. The eight phases
 
-### Phase 4: Ortholog Projection
-**Goal:** Map the pan-life protein pool to specific *Zea mays* orthologs.
-*   **Primary Databases:** **Ensembl Plants REST API** and **PLAZA API**.
-*   **Query Logic:** The pipeline queries Ensembl Plants to find homologous genes in maize. It independently queries PLAZA to find orthogroups containing the UniProt ID, filtering for maize members. A consensus score is generated if both databases agree on the ortholog mapping.
+### Phase 1 — Chemical entity identification
 
-### Phase 5: Structural & Transcriptomic Validation
-**Goal:** Filter the candidate maize genes using 3D structural homology and evaluate their tissue expression.
-*   **Structural Validation:**
-    *   Queries the **AlphaFold DB API** to retrieve the PDB structures for both the query UniProt protein and the candidate maize protein.
-    *   Evaluates the `pLDDT` (confidence) score.
-    *   **Fallback:** If the AlphaFold PDBs are successfully downloaded, it runs a local `foldseek easy-search` to calculate a whole-protein structural TM-Score.
-*   **Transcriptomic Validation:**
-    *   Queries the **EBI Expression Atlas (RNA-seq)** for baseline tissue expression (FPKM) of the maize gene.
+Resolves an input m/z into a ChEBI identifier plus the conjugate-acid/base
+family it belongs to.
 
-### Phase 6: Domain Structural Homology
-**Goal:** Perform highly targeted structural alignment on catalytic domains rather than whole proteins, preventing false rejections caused by domain shuffling or regulatory sequence variations.
-*   **Primary Database:** **InterPro REST API**.
-*   **Query Logic:**
-    1.  Queries InterPro to identify the longest **Pfam** domain on the query protein.
-    2.  Extracts the exact start and end residue coordinates of that domain.
-    3.  Dynamically slices the downloaded AlphaFold PDB to isolate just the domain structure.
-    4.  Runs a localized Foldseek alignment between the *sliced* domain PDB and the *full* maize target PDB.
-    5.  Outputs a highly accurate **Domain TM-Score**.
+- **CEU Mass Mediator** (`/api/v3/batch`) is the primary lookup. Requires
+  `metabolites_type`, `masses_mode`, `deuterium` fields or the server
+  throws a NullPointerException — those are populated by default.
+- **Metabolomics Workbench** `/rest/moverz/MB/{mz}/{adduct}/{tol}/json`
+  is the fallback (note: returns tab-separated text despite the `/json`
+  URL suffix; the parser handles this).
+- **PubChem PUG-REST** resolves a compound name to a CID → SMILES →
+  monoisotopic mass.
+- **PubChem → ChEBI cross-reference** picks up the canonical ChEBI ID
+  (typically the neutral form).
+- **ChEBI conjugate-form expansion** (via OLS4) walks the
+  `is_protonated_form_of` / `is_deprotonated_form_of` / `is_tautomer_of`
+  graph up to 2 hops, so a query that lands on `CHEBI:18012` (fumaric acid)
+  automatically also looks up `CHEBI:29806` (fumarate²⁻) and
+  `CHEBI:37154` (fumarate¹⁻) — without this expansion, Rhea returns 0 hits
+  because it uses the ionised form.
 
-## 3. Batch Processing
-For high-throughput analysis, use the **Batch Processing** tab. You can download the CSV template, fill it with your m/z values, modes, and parameters, and upload it. The pipeline will process queries sequentially and generate downloadable HTML and CSV reports summarizing the Top Maize Targets for each feature.
+Tunable: `cmm_tolerance_ppm`, `chebi_expansion_depth`.
+
+### Phase 2 — Reaction networks
+
+For the ChEBI family from Phase 1:
+
+- **Rhea SPARQL endpoint** with a `VALUES ?target_chebi { … }` clause
+  covering every form. The query selects reaction ID, equation text, label,
+  EC number(s), `isTransport`, `isBalanced`. A separate `COUNT(DISTINCT)`
+  query runs when the row cap is hit, so the log can report
+  "showing top 100 of 247 available".
+- **KEGG** `/conv/compound/chebi:{id}` → KEGG compound, then
+  `/link/pathway/{cpd_id}` → pathway IDs, then a batched `/list/{ids}` →
+  human-readable pathway names (e.g. "Citrate cycle (TCA cycle)" rather
+  than just `path:map00020`).
+
+Tunable: `rhea_fetch_limit` (default 100).
+
+### Phase 3 — Pan-life protein pool
+
+For each reaction (or directly for the EC-number entry point):
+
+- **UniProt REST** queries split into three categories:
+  - Enzymes — either from Rhea IDs (`rhea:"RHEA:XXX" OR rhea:"RHEA:YYY"`),
+    or `chebi:"…" AND keyword:KW-0255` if Phase 2 returned nothing
+  - Transporters — `chebi:"…" AND keyword:KW-0813`
+  - Receptors — `chebi:"…" AND keyword:KW-0675`
+- All three queries OR together the full ChEBI conjugate family.
+- The total-matching count from UniProt's `X-Total-Results` header is
+  surfaced in the log, so you can see "top 25 of 1028 matching — bump
+  UNIPROT_SIZE_PER_CATEGORY to see more".
+- Results are deduplicated by UniProt accession.
+
+Tunable: `uniprot_size_per_category` (default 25).
+
+### Phase 4 — Sequence orthology (lane 1 of discovery)
+
+For each pan-life protein, looks up *Zea mays* orthologs by sequence:
+
+- **Ensembl Compara plants** — UniProt → Gramene/TAIR/EnsemblPlants gene
+  ID via UniProt REST → `rest.ensembl.org/homology/id/{species}/{gene_id}?compara=plants;target_species=zea_mays`.
+  Returns % identity.
+- **Ensembl pan-homology** — same lookup but with `compara=pan_homology` for
+  cross-kingdom orthology (e.g. cyanobacterial chloroplast lineage genes
+  with maize counterparts).
+- **PLAZA Monocots v5** — best-effort; the anonymous endpoint started
+  returning 403 in 2026 so this typically logs a warning and returns nothing.
+- **HMMER `phmmer` fallback** — only fires when all three live APIs return
+  zero. Runs locally against the pre-downloaded Zm-B73-REFERENCE-NAM-5.0
+  proteome (~12 MB).
+
+All hits land in the **consensus reducer**, which dedupes by maize gene
+model and sums sources. Hits get classified into discovery lanes (see
+Phase 4.5 below).
+
+Tunable: `hmmer_e_value` (default 1e-5).
+
+### Phase 4.5 — Structural discovery (lane 2 of discovery)
+
+Runs in parallel with Phase 4. Requires the maize AlphaFold + Foldseek
+index built by `install_maize_afdb.py`; degrades gracefully if the index
+isn't present (just logs a warning and skips).
+
+- For each pan-life protein, downloads its AlphaFold PDB
+  (`https://alphafold.ebi.ac.uk/api/prediction/{acc}` → current `pdbUrl`,
+  forward-compatible across AF v4 / v5 / v6+).
+- Runs `foldseek easy-search --alignment-type 2` against the indexed
+  maize AlphaFold proteome (~40k structures, ~1–2 GB on disk).
+- Returns full-protein TM scores: `qtmscore` (normalised by query length)
+  and `ttmscore` (normalised by target length). The filter is
+  `max(qTM, tTM) >= 0.5`, which catches three useful orthology patterns:
+  true full-length ortholog (both high), query is a sub-domain of a
+  larger maize protein (qTM high, tTM low), or vice versa.
+- Hits are tagged with source `"Foldseek-structural"` and merge into the
+  same consensus reducer as Phase 4.
+
+Tunable: `foldseek_tm_threshold` (default 0.5), `foldseek_max_hits_per_query`
+(default 10), `foldseek_concurrency` (default 2 parallel processes).
+
+### Discovery lanes
+
+After Phases 4 + 4.5 merge, each maize candidate is classified:
+
+- **Consensus** — found by both a sequence DB *and* Foldseek; highest
+  confidence, ranks first in the dashboard.
+- **Structure-only** — Foldseek alone (the "hidden orthologs" — divergent
+  in sequence but structurally conserved).
+- **Sequence-only** — sequence DBs alone.
+
+Each lane gets its own collapsible section in the UI with a one-line
+summary per row; expand a row to see sources, query protein, Pfam domain
+(if validated), top Compara hit, and tissue expression.
+
+### Phase 5 — Enrichment
+
+For every discovered maize ortholog (not just the top-N), Phase 5 adds:
+
+- **AlphaFold pLDDT** (model quality, 0–100)
+- **Gramene expression breadth** — count + IDs of EBI Expression Atlas
+  experiments where the gene is reported as expressed. Per-tissue FPKM
+  values are no longer available from the EBI REST API (EBI deprecated the
+  `/gxa/json/search/baseline` endpoint in 2024); the qualitative breadth
+  is what's exposed instead. Each experiment ID links out to its GXA page.
+- **TM-score** — for consensus / structure-only hits, reused from Phase 4.5
+  (no duplicated Foldseek call). For sequence-only hits in the top-N, a
+  fresh 1-to-1 Foldseek alignment runs. Beyond the top-N, sequence-only
+  hits leave TM blank (cheap-path enrichment).
+
+A pLDDT > 70 filter trims targets whose AlphaFold model is too uncertain.
+Targets with no model but ≥1 expression experiment are retained.
+
+Tunable: `enrichment_top_n` (default 10), `plddt_threshold` (default 70).
+
+### Phase 6 — Domain-level structural validation
+
+For the top-N enriched targets:
+
+- **InterPro Pfam API** → longest Pfam domain on the query protein.
+- The query AlphaFold PDB is **sliced** to those residue coordinates.
+- `foldseek easy-search` aligns the sliced query against the full maize
+  target PDB → domain-level TM-score.
+
+This catches cases where the *catalytic domain* is conserved but the
+flanking regions diverge — a common pattern for plant secondary-metabolism
+enzymes.
+
+### Phase 7 — Pan-plant Compara cross-check
+
+For the top-N enriched targets:
+
+- **Ensembl Compara plants** — `/homology/id/zea_mays/{gene}?compara=plants`
+  returns the gene's orthologs across all plant species in Compara
+  (Arabidopsis, rice, sorghum, brachypodium, …).
+- Each ortholog gets a clickable Ensembl Plants gene-summary link.
+
+Tunable: `compara_max_orthologs_per_target` (default 10).
+
+### Final step — maize gene metadata enrichment
+
+After all phases complete, a single batched call to Gramene's search API
+resolves every unique maize gene ID surfaced anywhere in the response to a
+human-readable label:
+
+- `symbol` — e.g. `SDH1_0`
+- `description` — e.g. `succinate dehydrogenase4`
+- `synonyms` — legacy IDs + maize-community-style symbols (e.g. `sudh4`,
+  `GRMZM2G079888`, `Zm00001d007966`)
+
+These flow into the UI, CSV, and HTML report — so every `Zm00001eb*` ID is
+shown alongside its readable label and synonyms.
+
+---
+
+## 3. Configuration tab
+
+Every cutoff, cap, and threshold is exposed in the **Configuration** tab
+with inline guidance:
+
+| Field | Default | Phase | What it controls |
+|---|---|---|---|
+| `cmm_tolerance_ppm` | 5.0 | 1 | m/z mass tolerance for CMM + Metabolomics Workbench |
+| `rhea_fetch_limit` | 100 | 2 | Rhea SPARQL LIMIT clause |
+| `chebi_expansion_depth` | 2 | 1, 2, 3 | Hops through the ChEBI conjugate-form graph |
+| `uniprot_size_per_category` | 25 | 3 | Top-N UniProt hits per Enzyme/Transporter/Receptor query |
+| `hmmer_e_value` | 1e-5 | 4 | Fallback HMMER E-value cutoff |
+| `foldseek_tm_threshold` | 0.5 | 4.5 | Min `max(qTM, tTM)` to accept a structural ortholog |
+| `foldseek_max_hits_per_query` | 10 | 4.5 | Top-N maize structural hits per query protein |
+| `foldseek_concurrency` | 2 | 4.5 | Parallel Foldseek processes (multi-threaded each) |
+| `enrichment_top_n` | 10 | 5 | Top-N hits that get full enrichment (1-to-1 Foldseek for sequence-only) |
+| `plddt_threshold` | 70.0 | 5 | Min AlphaFold pLDDT to keep an enriched target |
+| `compara_max_orthologs_per_target` | 10 | 7 | Top-N pan-plant orthologs per maize target |
+
+Changes auto-save in `localStorage` (key `maysquery.pipeline_config`) and
+apply to every subsequent run. The Configuration tab also has per-field
+reset links and a "Reset all to defaults" button.
+
+The terminal log line at the start of each run summarises any non-default
+overrides: `cfg-overrides=3 (foldseek_tm_threshold, plddt_threshold, …)`.
+
+---
+
+## 4. Output
+
+### Live UI
+
+The dashboard renders as:
+
+1. **Executive summary** — high-contrast panel with resolved entity, count
+   rollups, top KEGG pathway, lane breakdown, and a ⭐ top-target chip with
+   gene + symbol + description + key metrics.
+2. **Collapsible drill-down sections**:
+   - Resolved chemical entity (open by default)
+   - Reactions (collapsed; equation + EC + pathway names visible on expand)
+   - Pan-life proteins (collapsed; each protein is itself collapsible to GO terms)
+   - **Maize candidates** (open by default) with three lane sub-sections
+   - Pan-plant Compara details (collapsed)
+   - Execution log (collapsed)
+   - Additional Homologs (Pending Enrichment) (collapsed) — for on-demand
+     1-to-1 Foldseek on hits that didn't survive the Phase 5 filter
+   - Pathway network graph (collapsed) — Cytoscape view, capped to top
+     8 reactions × 10 proteins × 8 orthologs to stay readable
+3. **Live terminal log** with color-coded per-phase events.
+
+### HTML report
+
+`/api/report/single` and `/api/batch` generate a self-contained HTML report
+with the same hierarchy: per-query executive card up top, then `<details>`
+sections for each phase. The Maize Candidates table includes columns for
+Lane, Gene (linked to MaizeGDB), Query Protein, TM, Seq, pLDDT,
+Expression (count + first 4 GXA experiment IDs linked), Pfam Domain (with
+residue range + TM), and Top Compara.
+
+### CSV report
+
+One row per discovered maize ortholog (55 columns). Key fields:
+
+- **Query context** — `query_index`, `query_type`, `query_input`, `ion_mode`,
+  `chebi_id`, `pubchem_cid`, `monoisotopic_mass`, `num_reactions`,
+  `num_proteins`, `num_orthologs_total`, lane breakdown counts,
+  `top_reaction_equation`, `top_reaction_ec`, `kegg_pathway_summary`
+- **Discovery** — `rank_overall`, `rank_in_lane`, `maize_gene_model`,
+  `maize_gene_url`, `gene_symbol`, `gene_description`, `gene_synonyms`,
+  `consensus_class` (consensus / sequence_only / structure_only),
+  `discovery_sources` (pipe-separated)
+- **Evidence** — `sequence_similarity_pct`, `structural_tm_score`,
+  `query_uniprot_id` + URL
+- **Enrichment** — `enriched`, `enrichment_kind` (full / cheap),
+  `plddt`, `n_expression_experiments`, `expression_experiment_ids`
+- **Domain (Phase 6)** — `pfam_domain_id`, `pfam_domain_name`,
+  `pfam_domain_url`, residue range, `domain_tm_score`
+- **Compara (Phase 7)** — `num_compara_orthologs`, top species/gene/URL/%ID
+
+A spreadsheet filter like `consensus_class = "consensus" AND
+gene_description CONTAINS "succinate"` is a one-click operation.
+
+---
+
+## 5. Failure modes & gotchas
+
+- **PLAZA 403** — the anonymous PLAZA Monocots 5 endpoint started rejecting
+  requests in 2026. Logged once per session; the pipeline keeps moving.
+- **EBI Expression Atlas per-tissue values** — that REST path was
+  deprecated. We now use Gramene's `expressed_in_gxa_attr_ss` for breadth
+  (count + experiment IDs).
+- **MaizeGDB / qTeller direct API** — Cloudflare blocks anonymous JSON
+  requests. We get gene metadata through Gramene instead.
+- **AlphaFold version churn** — the public PDBs migrated to v6. We hit the
+  AlphaFold prediction API and use whatever `pdbUrl` it returns, so this
+  is forward-compatible.
+- **Multi-domain enzymes** — Phase 4.5 uses whole-chain TM-align, so a
+  query enzyme whose single catalytic domain is fused to an unrelated
+  N-terminal regulatory chunk may under-score against maize. The log line
+  in Phase 4.5 explicitly calls this out; Phase 6 handles domain-level
+  re-search but only on already-enriched hits.
+- **Build cost of the structural index** — ~5 GB download + ~20–40 min
+  one-time build. The pipeline still runs without it; Phase 4.5 just stays
+  empty and the UI banner offers to build it.
+
+---
+
+## 6. Where things live in the repo
+
+```
+backend/
+  main.py                  FastAPI app + /api/run_pipeline/stream SSE endpoint
+  models.py                Pydantic models (PipelineConfig, OrthologMapping, …)
+  phase1.py                CMM + MW + PubChem + ChEBI mapping
+  phase2.py                Rhea SPARQL + KEGG pathway names
+  phase3.py                UniProt enzyme/transporter/receptor search
+  phase4.py                Sequence orthology (Ensembl Compara variants)
+  phase4_5.py              Foldseek structural discovery vs maize AFDB
+  phase5.py                AlphaFold pLDDT + Gramene expression + 1-to-1 Foldseek
+  phase6.py                Pfam-sliced domain Foldseek
+  phase7.py                Pan-plant Ensembl Compara cross-check
+  chebi_utils.py           OLS-based ChEBI conjugate-form expansion
+  hmmer_runner.py          Local phmmer subprocess wrapper (WSL on Windows)
+  install_foldseek.py      Foldseek binary installer (CLI)
+  install_maize_afdb.py    Maize AlphaFold proteome download + foldseek createdb
+  maize_gene_meta.py       Gramene-sourced gene symbol/description lookup
+  report_generator.py      HTML + CSV report builders
+  static/
+    index.html / app.js / style.css   Single-page dashboard
+
+setup.ps1 / setup.sh       One-shot installer (Windows / Unix)
+run.ps1 / run.sh           Launcher (Windows / Unix)
+INSTALLATION.md            Cross-platform install guide
+USER_GUIDE.md              This file
+```
