@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metabolite-to-Gene Pipeline</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/dagre@0.7.4/dist/dagre.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+</head>
+<body>
+    <div class="glass-container">
+        <header>
+            <h1>Metabolite-to-Gene Pipeline</h1>
+            <p>Zea mays Pan-life Discovery</p>
+        </header>
+        
+        <main>
+            <section class="input-section glass-panel">
+                <div class="tabs">
+                    <button class="tab-btn active" id="tab-single">Single Query</button>
+                    <button class="tab-btn" id="tab-batch">Batch Processing</button>
+                </div>
+
+                <!-- Single Query Form -->
+                <div id="pipeline-form-container" class="tab-content active">
+                    <div class="tabs" style="margin-bottom: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px;">
+                        <button type="button" class="tab-btn active" style="font-size: 0.9rem; padding: 5px 10px;" id="subtab-mz">m/z Value</button>
+                        <button type="button" class="tab-btn" style="font-size: 0.9rem; padding: 5px 10px;" id="subtab-chem">Chemical Name</button>
+                        <button type="button" class="tab-btn" style="font-size: 0.9rem; padding: 5px 10px;" id="subtab-ec">EC Number</button>
+                    </div>
+
+                    <form id="pipeline-form">
+                        <input type="hidden" id="query_type" value="mz">
+                        
+                        <!-- m/z Inputs -->
+                        <div id="inputs-mz">
+                            <div class="form-group">
+                                <label for="mz">m/z Value:</label>
+                                <input type="number" step="0.0001" id="mz" placeholder="e.g., 115.0037">
+                            </div>
+                            <div class="form-group">
+                                <label for="mode">Ion Mode:</label>
+                                <select id="mode">
+                                    <option value="positive">Positive</option>
+                                    <option value="negative">Negative</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Chemical Inputs -->
+                        <div id="inputs-chem" style="display: none;">
+                            <div class="form-group">
+                                <label for="chemical_name">Chemical Name:</label>
+                                <input type="text" id="chemical_name" placeholder="e.g., Fumarate">
+                            </div>
+                        </div>
+
+                        <!-- EC Inputs -->
+                        <div id="inputs-ec" style="display: none;">
+                            <div class="form-group">
+                                <label for="ec_number">EC Number:</label>
+                                <input type="text" id="ec_number" placeholder="e.g., 4.2.1.2">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn-glow">Run Pipeline</button>
+                    </form>
+                </div>
+
+                <!-- Batch Processing Form -->
+                <form id="batch-form" class="tab-content" style="display: none;">
+                    <div class="form-group">
+                        <p style="margin-bottom: 10px; font-size: 0.9rem; color: #cbd5e1;">Upload a CSV containing m/z queries to process them sequentially.</p>
+                        <a href="/api/download/template" class="badge" style="background:#3b82f6; color:#fff; text-decoration:none; margin-bottom: 15px; display:inline-block;">⬇️ Download CSV Template</a>
+                        <br>
+                        <label for="csv-file">Select CSV File:</label>
+                        <input type="file" id="csv-file" accept=".csv" required style="color: #fff;">
+                    </div>
+                    <button type="submit" class="btn-glow">Run Batch Pipeline</button>
+                    <div id="batch-status" style="margin-top: 15px; color: #6ee7b7; font-weight: 600;"></div>
+                    <div id="batch-downloads" style="margin-top: 15px; display: none; gap: 10px;">
+                        <a id="batch-dl-html" href="#" target="_blank" class="badge" style="background:#10b981; color:#fff; text-decoration:none;">📄 Download HTML Report</a>
+                        <a id="batch-dl-csv" href="#" target="_blank" class="badge" style="background:#8b5cf6; color:#fff; text-decoration:none;">📊 Download CSV Report</a>
+                    </div>
+                </form>
+            </section>
+
+            <section class="tracker-section glass-panel" id="tracker-section">
+                <h2>Pipeline Tracker</h2>
+                <div class="pipeline-tracker">
+                    <div class="step" id="step-1">1. Metabolite<br>Resolution</div>
+                    <div class="step" id="step-2">2. Reaction<br>Networks</div>
+                    <div class="step" id="step-3">3. Protein<br>Pool</div>
+                    <div class="step" id="step-4">4. Homology<br>Search</div>
+                    <div class="step" id="step-5">5. Structural<br>Validation</div>
+                    <div class="step" id="step-6">6. Domain<br>Validation</div>
+                </div>
+            </section>
+
+            <section class="results-section glass-panel" id="results-section" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2>Pipeline Overview</h2>
+                    <div id="single-report-downloads" style="display: none; gap: 10px;">
+                        <button id="dl-single-html" class="badge" style="background:#10b981; color:#fff; cursor:pointer; border:none;">📄 HTML Report</button>
+                        <button id="dl-single-csv" class="badge" style="background:#8b5cf6; color:#fff; cursor:pointer; border:none;">📊 CSV Report</button>
+                    </div>
+                </div>
+                <div class="network-legend" style="margin-bottom: 15px; font-size: 0.85rem; display: flex; gap: 15px; flex-wrap: wrap;">
+                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#f87171; clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);"></span> m/z Query</span>
+                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#818cf8; border-radius:50%;"></span> Chemical Entity</span>
+                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#34d399; border-radius:3px;"></span> Reaction</span>
+                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:14px; height:12px; background:#fbbf24; clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);"></span> Protein</span>
+                    <span style="display:flex; align-items:center; gap:5px;"><span style="display:inline-block; width:12px; height:12px; background:#c084fc; clip-path:polygon(50% 0%, 0% 100%, 100% 100%);"></span> Maize Gene</span>
+                </div>
+                <div id="cy" class="network-graph"></div>
+                <div id="dashboard-container"></div>
+            </section>
+        </main>
+    </div>
+    <script src="/static/app.js?v=8"></script>
+</body>
+</html>
