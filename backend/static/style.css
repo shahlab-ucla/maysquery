@@ -702,6 +702,7 @@ a.gene-link:hover {
 .lane-pill.lane-consensus { background: linear-gradient(90deg, rgba(167,139,250,0.22), rgba(52,211,153,0.22)); border-color: rgba(167,139,250,0.4); color: #ede9fe; }
 .lane-pill.lane-structure { background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.4); color: #c7d2fe; }
 .lane-pill.lane-sequence  { background: rgba(251,191,36,0.18); border-color: rgba(251,191,36,0.4); color: #fde68a; }
+.lane-pill.lane-curated   { background: rgba(74,222,128,0.18); border-color: rgba(74,222,128,0.4); color: #bbf7d0; }
 
 .lane-block {
     margin-top: 12px;
@@ -714,6 +715,7 @@ a.gene-link:hover {
 .lane-block.lane-consensus { border-color: rgba(167,139,250,0.35); background: linear-gradient(180deg, rgba(167,139,250,0.05) 0%, rgba(52,211,153,0.04) 100%); }
 .lane-block.lane-structure { border-color: rgba(99,102,241,0.35);  background: rgba(99,102,241,0.05); }
 .lane-block.lane-sequence  { border-color: rgba(251,191,36,0.35);  background: rgba(251,191,36,0.04); }
+.lane-block.lane-curated   { border-color: rgba(74,222,128,0.35);  background: rgba(74,222,128,0.05); }
 .lane-block > .lane-blurb,
 .lane-block > .lane-row { margin: 0 14px; }
 .lane-block > .lane-row { margin-bottom: 6px; }
@@ -836,6 +838,45 @@ a.gene-link:hover {
 }
 .badge-src-seq    { background: rgba(251, 191, 36, 0.2); color: #fde68a; }
 .badge-src-struct { background: rgba(99, 102, 241, 0.25); color: #c7d2fe; }
+.badge-src-curated{ background: rgba(74, 222, 128, 0.22); color: #bbf7d0; }
+
+/* CornCyc pathway block */
+.corncyc-block {
+    padding: 12px 14px;
+    background: rgba(74, 222, 128, 0.04);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    border-radius: 8px;
+}
+.corncyc-empty { color: var(--text-muted); font-style: italic; padding: 12px; }
+.corncyc-intro {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed rgba(74,222,128,0.2);
+    line-height: 1.5;
+}
+.corncyc-link { color: #86efac; text-decoration: none; border-bottom: 1px dashed rgba(134,239,172,0.4); }
+.corncyc-link:hover { color: #4ade80; border-bottom-color: #4ade80; }
+.cc-pw-row {
+    padding: 8px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.05);
+}
+.cc-pw-row:last-child { border-bottom: none; }
+.cc-pw-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 0.9rem; }
+.cc-pw-genes { display: flex; flex-wrap: wrap; gap: 4px; }
+.cc-pw-gene-chip {
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+    color: #bbf7d0;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    text-decoration: none;
+}
+.cc-pw-gene-chip:hover { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+.cc-pw-sym { font-weight: 600; color: #4ade80; margin-left: 4px; }
 .badge-enriched   { background: rgba(74, 222, 128, 0.18); color: #86efac; font-size: 0.7rem; }
 .badge-cheap      { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; font-size: 0.7rem; }
 .badge-unenriched { background: rgba(148, 163, 184, 0.15); color: #94a3b8; font-size: 0.7rem; }

@@ -206,6 +206,39 @@ Then open `http://127.0.0.1:8008/static/index.html`.
 
 ---
 
+## Optional: CornCyc curated maize pathway annotation
+
+CornCyc (the Plant Metabolic Network's *Zea mays* Pathway/Genome Database) is
+license-restricted but free for non-commercial use. Once enabled, it powers:
+
+- A **curated discovery lane** (4th lane alongside sequence, structure, and
+  consensus) — maize genes annotated by PMN as catalysing reactions
+  involving the query compound, even when sequence/structure search misses them.
+- A dedicated **"CornCyc maize pathway context"** section in the dashboard
+  showing every PlantCyc pathway the compound participates in, with the
+  list of maize genes per pathway (linked to MaizeGDB).
+- New `corncyc_*` columns in the CSV report and a green-tinted block in the
+  HTML report.
+
+To enable:
+
+1. Agree to the PMN license and download the CornCyc PGDB tarball from
+   <https://plantcyc.org/database_imported/> (latest tested: CornCyc 13.0.0).
+2. Extract the archive somewhere on disk. The flatfiles must end up at
+   `<dir>/<version>/data/` (the structure the PMN ships in).
+3. Either:
+   - Drop the extracted folder at the repo root as `corncyc/<version>/data/`
+     (default), or
+   - Set the `CORNCYC_DIR` environment variable to the directory that
+     contains `<version>/data/`.
+
+The pipeline auto-detects the PGDB on first use and loads it in ~0.3 s. A
+banner above the pipeline tracker shows the current status (✓ loaded with
+gene/reaction/pathway counts, or ○ "not installed" with the expected path).
+
+`backend/data/corncyc/` is excluded from git so you don't accidentally
+redistribute the licensed PGDB.
+
 ## Optional: maize AlphaFold structural-discovery index
 
 Phase 4.5 (the "hidden ortholog" structural-discovery lane) needs an

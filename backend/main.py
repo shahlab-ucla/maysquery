@@ -78,15 +78,24 @@ async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dic
         chemical_entity = await execute_phase1(input_data, logs=execution_logs)
         reactions = await execute_phase2(chemical_entity, logs=execution_logs, config=cfg)
         proteins = await execute_phase3(chemical_entity, reactions, logs=execution_logs, config=cfg)
-        orthologs = await execute_phase4(proteins, input_data, logs=execution_logs, config=cfg)
+        orthologs = await execute_phase4(
+            proteins, input_data, logs=execution_logs, config=cfg,
+            chebi_id=(chemical_entity.chebi_id if chemical_entity else None),
+        )
     elif input_data.query_type == "chemical":
         chemical_entity = await fetch_chemical_entity_by_name(input_data.chemical_name, logs=execution_logs)
         reactions = await execute_phase2(chemical_entity, logs=execution_logs, config=cfg)
         proteins = await execute_phase3(chemical_entity, reactions, logs=execution_logs, config=cfg)
-        orthologs = await execute_phase4(proteins, input_data, logs=execution_logs, config=cfg)
+        orthologs = await execute_phase4(
+            proteins, input_data, logs=execution_logs, config=cfg,
+            chebi_id=(chemical_entity.chebi_id if chemical_entity else None),
+        )
     elif input_data.query_type == "ec":
         proteins = await execute_phase3_by_ec(input_data.ec_number, logs=execution_logs, config=cfg)
-        orthologs = await execute_phase4(proteins, input_data, logs=execution_logs, config=cfg)
+        orthologs = await execute_phase4(
+            proteins, input_data, logs=execution_logs, config=cfg,
+            chebi_id=(chemical_entity.chebi_id if chemical_entity else None),
+        )
 
     # Phase 5 now handles ALL orthologs internally:
     #  - Top `enrichment_top_n` sequence-only hits get the expensive 1-to-1 Foldseek
@@ -133,6 +142,24 @@ async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dic
             message=f"{n_named}/{len(unique_gene_ids)} maize genes resolved{sample_label}",
         ))
 
+    # CornCyc pathway annotation for the resolved compound — flows into the
+    # UI's "Maize pathway context (CornCyc)" section and the HTML/CSV reports.
+    corncyc_annotation = None
+    if chemical_entity:
+        from corncyc_lookup import corncyc_annotation_for_chebi
+        corncyc_annotation = corncyc_annotation_for_chebi(chemical_entity.chebi_id)
+        if corncyc_annotation:
+            execution_logs.append(ExecutionLogEntry(
+                phase=2, database="CornCyc (PMN)", status="success",
+                hits=corncyc_annotation["n_pathways"],
+                message=(
+                    f"CornCyc maize pathway context: {corncyc_annotation['n_pathways']} pathway(s), "
+                    f"{corncyc_annotation['n_maize_genes']} annotated maize gene(s)"
+                    + (f". Top: '{corncyc_annotation['pathways'][0]['common_name']}'"
+                       if corncyc_annotation['pathways'] else "")
+                ),
+            ))
+
     return {
         "input_data": input_data.model_dump(),
         "chemical_entity": chemical_entity.model_dump() if chemical_entity else None,
@@ -144,6 +171,7 @@ async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dic
         "domain_targets": [d.model_dump() for d in domain_targets],
         "advanced_homology_targets": [a.model_dump() for a in advanced_homology_targets],
         "maize_gene_metadata": maize_gene_metadata,
+        "corncyc_annotation": corncyc_annotation,
         "execution_logs": [l.model_dump() for l in execution_logs]
     }
 
@@ -227,6 +255,13 @@ def pipeline_config_schema():
             "ge": ge, "le": le, "gt": gt, "lt": lt,
         })
     return {"fields": fields, "defaults": PipelineConfig().model_dump()}
+
+
+@app.get("/api/corncyc/status")
+def corncyc_status():
+    """Report whether the CornCyc PGDB is installed locally + summary stats."""
+    from corncyc_loader import get_status
+    return get_status()
 
 
 @app.get("/api/maize_afdb/status")

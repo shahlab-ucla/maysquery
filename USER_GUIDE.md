@@ -172,6 +172,36 @@ This catches cases where the *catalytic domain* is conserved but the
 flanking regions diverge — a common pattern for plant secondary-metabolism
 enzymes.
 
+### CornCyc curated lane (opt-in, joins Phase 4)
+
+When the user-licensed CornCyc PGDB is installed locally (see INSTALLATION.md),
+a fourth discovery lane joins the consensus reducer:
+
+- The query ChEBI is matched against CornCyc's compound frames via the
+  `(CHEBI "…")` cross-references in `compounds.dat`. Conjugate-form
+  expansion from Phase 1 ensures we still hit, e.g. fumarate(2-)
+  (CHEBI:29806 → CornCyc `FUM`) even when PubChem gave us the neutral
+  form (CHEBI:18012).
+- For each matched compound, we walk `compounds.dat` → reactions touching
+  the compound → `enzrxns.dat` (enzymatic-reaction frames) → `proteins.dat`
+  (Polypeptide frames) → maize gene IDs (`GENE - ZM00001EB*` v5).
+- Each annotated gene becomes an `OrthologMapping` with
+  `sources=["CornCyc"]`, `similarity_score=100` (curation, not homology),
+  and the `plaza_orthogroup` field encoding the pathway(s) it appears in.
+- The consensus reducer then folds these into the same pool as Ensembl and
+  Foldseek hits. **A gene found by ≥2 lanes (sequence, structure, or
+  CornCyc) is now classified `consensus`** — the strongest evidence class.
+- `curated_only` is a new lane class for genes annotated by CornCyc but
+  not surfaced by any homology search.
+
+In parallel, the response carries a `corncyc_annotation` block listing every
+PlantCyc pathway the query compound participates in, with per-pathway
+maize-gene lists. This drives the **"CornCyc maize pathway context"**
+section in the dashboard and the green-tinted block in the HTML report.
+
+CornCyc is opt-in — the pipeline runs fine without it and logs an info
+message saying it's not installed.
+
 ### Phase 7 — Pan-plant Compara cross-check
 
 For the top-N enriched targets:

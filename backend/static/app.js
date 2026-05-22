@@ -112,7 +112,49 @@ document.addEventListener('DOMContentLoaded', () => {
     afdbBanner.refresh();
     const b = afdbBanner.button();
     if (b) b.addEventListener('click', () => afdbBanner.install());
+    corncycBanner.refresh();
 });
+
+// ---------- CornCyc availability banner ----------
+const corncycBanner = {
+    root:   () => document.getElementById('corncyc-banner'),
+    icon:   () => document.getElementById('corncyc-banner-icon'),
+    title:  () => document.getElementById('corncyc-banner-title'),
+    detail: () => document.getElementById('corncyc-banner-detail'),
+
+    setState(stateClass, icon, title, detail) {
+        const r = this.root(); if (!r) return;
+        r.style.display = 'flex';
+        r.classList.remove('afdb-banner-loading','afdb-banner-ready','afdb-banner-missing','afdb-banner-error');
+        r.classList.add(stateClass);
+        if (this.icon())   this.icon().textContent = icon;
+        if (this.title())  this.title().textContent = title;
+        if (this.detail()) this.detail().textContent = detail || '';
+    },
+
+    async refresh() {
+        try {
+            const resp = await fetch('/api/corncyc/status');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const s = await resp.json();
+            if (s.available && s.loaded) {
+                this.setState('afdb-banner-ready', '✓',
+                    `CornCyc ${s.version} loaded — ${s.maize_genes} maize genes annotated`,
+                    `${s.compounds} compounds (${s.chebi_mapped_compounds} ChEBI-mapped) · ${s.reactions} reactions · ${s.pathways} pathways`);
+            } else if (s.available) {
+                this.setState('afdb-banner-missing', '◷',
+                    `CornCyc ${s.version} detected (will load on first query)`,
+                    s.data_dir);
+            } else {
+                this.setState('afdb-banner-missing', '○',
+                    'CornCyc curated annotation not installed',
+                    `Drop the PMN-licensed PGDB at ${s.expected_path || 'corncyc/<version>/data/'} to enable the curated discovery lane and pathway context.`);
+            }
+        } catch (e) {
+            this.setState('afdb-banner-error', '✗', 'CornCyc status check failed', String(e));
+        }
+    },
+};
 
 // ---------- Pipeline Configuration ----------
 // Schema (defaults + bounds + descriptions) is fetched from /api/pipeline_config/schema.
@@ -372,21 +414,28 @@ document.addEventListener('DOMContentLoaded', () => { initConfigTab(); });
 
 // ---------- Discovery-lane classification (mirrors report_generator.classify_ortholog) ----------
 const STRUCTURAL_SOURCE = 'Foldseek-structural';
+const CURATED_SOURCE    = 'CornCyc';
 
 function classifyOrtholog(sources) {
     const s = new Set(sources || []);
-    const hasStruct = s.has(STRUCTURAL_SOURCE);
+    const hasStruct  = s.has(STRUCTURAL_SOURCE);
+    const hasCurated = s.has(CURATED_SOURCE);
     s.delete(STRUCTURAL_SOURCE);
+    s.delete(CURATED_SOURCE);
     const hasSeq = s.size > 0;
-    if (hasSeq && hasStruct) return 'consensus';
-    if (hasStruct)           return 'structure_only';
+    const lanesHit = (hasSeq ? 1 : 0) + (hasStruct ? 1 : 0) + (hasCurated ? 1 : 0);
+    if (lanesHit >= 2) return 'consensus';
+    if (hasStruct)     return 'structure_only';
+    if (hasSeq)        return 'sequence_only';
+    if (hasCurated)    return 'curated_only';
     return 'sequence_only';
 }
 
 const laneMeta = {
-    consensus:      { label: 'Consensus (Seq + Struct)', icon: '◆', cls: 'lane-consensus' },
-    sequence_only:  { label: 'Sequence-based',           icon: '◐', cls: 'lane-sequence' },
-    structure_only: { label: 'Structure-based',          icon: '◑', cls: 'lane-structure' },
+    consensus:      { label: 'Consensus (≥2 lanes)',      icon: '◆', cls: 'lane-consensus' },
+    sequence_only:  { label: 'Sequence-based',            icon: '◐', cls: 'lane-sequence' },
+    structure_only: { label: 'Structure-based',           icon: '◑', cls: 'lane-structure' },
+    curated_only:   { label: 'CornCyc curated',           icon: '★', cls: 'lane-curated' },
 };
 
 function buildEnrichmentRows(orthologs, data) {
@@ -857,6 +906,7 @@ function renderResults(data) {
         consensus:      allRowsPrecomputed.filter(r => r.cls === 'consensus'),
         structure_only: allRowsPrecomputed.filter(r => r.cls === 'structure_only'),
         sequence_only:  allRowsPrecomputed.filter(r => r.cls === 'sequence_only'),
+        curated_only:   allRowsPrecomputed.filter(r => r.cls === 'curated_only'),
     };
 
     // ----- Executive summary -----
@@ -891,17 +941,29 @@ function renderResults(data) {
     // Maize candidates — each lane in its own collapsible block
     const laneBody = `
         ${renderLaneSection('consensus', lanes.consensus,
-            'Detected by BOTH sequence and structure — highest confidence.')}
+            'Detected by ≥2 independent lanes (sequence, structure, or CornCyc curation) — highest confidence.')}
         ${renderLaneSection('structure_only', lanes.structure_only,
             'Recovered only by Foldseek against the maize AlphaFold proteome — "hidden orthologs" with divergent sequence but conserved fold.')}
+        ${renderLaneSection('curated_only', lanes.curated_only,
+            'Annotated by CornCyc (PlantCyc/PMN) as catalysing a reaction involving this compound, but not surfaced by sequence or structural homology search.')}
         ${renderLaneSection('sequence_only', lanes.sequence_only,
             'Detected only by sequence homology (Ensembl Compara / pan-homology, HMMER fallback).')}
     `;
+    const laneCountsLabel = `${allRowsPrecomputed.length} total · ${lanes.consensus.length} consensus · ${lanes.structure_only.length} structure · ${lanes.curated_only.length} curated · ${lanes.sequence_only.length} sequence`;
     html += renderDetail(
-        `Maize candidates <span class="detail-count">${allRowsPrecomputed.length} total · ${lanes.consensus.length} consensus · ${lanes.structure_only.length} structure-only · ${lanes.sequence_only.length} sequence-only</span>`,
+        `Maize candidates <span class="detail-count">${laneCountsLabel}</span>`,
         laneBody,
-        true,  // expanded by default — this is the main payload
+        true,
     );
+
+    // CornCyc maize-specific pathway context (when CornCyc is installed and the compound matched)
+    if (data.corncyc_annotation) {
+        html += renderDetail(
+            `CornCyc maize pathway context <span class="detail-count">${data.corncyc_annotation.n_pathways} pathway(s), ${data.corncyc_annotation.n_maize_genes} annotated maize gene(s) · PMN CornCyc ${data.corncyc_annotation.version}</span>`,
+            renderCornCycBlock(data.corncyc_annotation, data.maize_gene_metadata || {}),
+            true,
+        );
+    }
 
     // Pan-plant Compara details (full per-target ortholog tables)
     if (data.advanced_homology_targets && data.advanced_homology_targets.length > 0) {
@@ -1016,8 +1078,15 @@ function renderExecutiveSummary(data, lanes) {
             <div class="exec-row"><span class="exec-row-label">Discovery lanes</span><span class="exec-row-val">
                 <span class="lane-pill lane-consensus">${laneMeta.consensus.icon} ${lanes.consensus.length} consensus</span>
                 <span class="lane-pill lane-structure">${laneMeta.structure_only.icon} ${lanes.structure_only.length} structure-only</span>
+                <span class="lane-pill lane-curated">${laneMeta.curated_only.icon} ${lanes.curated_only.length} CornCyc-only</span>
                 <span class="lane-pill lane-sequence">${laneMeta.sequence_only.icon} ${lanes.sequence_only.length} sequence-only</span>
             </span></div>
+            ${data.corncyc_annotation ? `
+            <div class="exec-row"><span class="exec-row-label">CornCyc context</span><span class="exec-row-val">
+                <b>${data.corncyc_annotation.n_pathways}</b> pathway${data.corncyc_annotation.n_pathways===1?'':'s'} ·
+                <b>${data.corncyc_annotation.n_maize_genes}</b> curated maize gene${data.corncyc_annotation.n_maize_genes===1?'':'s'}
+                ${data.corncyc_annotation.pathways && data.corncyc_annotation.pathways[0] ? `· top: <i>${escapeHtml(data.corncyc_annotation.pathways[0].common_name)}</i>` : ''}
+            </span></div>` : ''}
         </div>
         ${topRowHTML}
     </section>`;
@@ -1103,6 +1172,40 @@ function renderComparaBlock(advTargets) {
             </table>
         </details>`;
     }).join('');
+}
+
+function renderCornCycBlock(ann, geneMetaMap) {
+    if (!ann || !ann.pathways || ann.pathways.length === 0) {
+        return `<div class="corncyc-empty">No CornCyc pathway annotation for this compound.</div>`;
+    }
+    const compoundsLine = (ann.compounds || []).map(c => `<a href="https://pmn.plantcyc.org/CORN/NEW-IMAGE?object=${encodeURIComponent(c.id)}" target="_blank" class="corncyc-link"><b>${escapeHtml(c.name || c.id)}</b></a>`).join(', ');
+    const pathwayRows = ann.pathways.slice(0, 25).map(p => {
+        const pwUrl = `https://pmn.plantcyc.org/pathway?orgid=CORN&id=${encodeURIComponent(p.id)}`;
+        const geneChips = (p.maize_genes || []).slice(0, 6).map(g => {
+            const m = (geneMetaMap || {})[g];
+            const label = (m && m.symbol) ? `${g} <span class="cc-pw-sym">${escapeHtml(m.symbol)}</span>` : g;
+            return `<a href="${dbUrl.maizeGene(g)}" target="_blank" class="cc-pw-gene-chip" title="${escapeHtmlAttr(g + (m && m.description ? ' — ' + m.description : ''))}">${label}</a>`;
+        }).join('');
+        const moreGenes = p.maize_genes.length > 6 ? `<span class="exec-dim"> +${p.maize_genes.length - 6} more</span>` : '';
+        return `<div class="cc-pw-row">
+            <div class="cc-pw-head">
+                <a href="${pwUrl}" target="_blank" class="corncyc-link"><b>${p.common_name}</b></a>
+                <span class="mono-dim">${p.id}</span>
+                <span class="exec-dim">· ${p.reactions_touching_compound.length} matching reaction(s) · ${p.maize_genes.length} maize gene(s)</span>
+            </div>
+            <div class="cc-pw-genes">${geneChips}${moreGenes}</div>
+        </div>`;
+    }).join('');
+    const overflow = ann.pathways.length > 25
+        ? `<div class="exec-dim" style="margin-top:8px;">+${ann.pathways.length - 25} more pathway(s) — see CSV for the full list.</div>` : '';
+    return `<div class="corncyc-block">
+        <div class="corncyc-intro">
+            Curated PlantCyc/CornCyc pathways involving ${compoundsLine}. Maize gene annotations from
+            <a href="https://www.plantcyc.org/" target="_blank" class="corncyc-link">Plant Metabolic Network</a>.
+        </div>
+        ${pathwayRows}
+        ${overflow}
+    </div>`;
 }
 
 function renderExecutionLogTable(logs) {
@@ -1319,9 +1422,12 @@ function renderLaneRow(r, lane) {
         ? `<a href="${dbUrl.uniprot(r.query_uniprot_id)}" target="_blank" class="mono">${r.query_uniprot_id}</a>`
         : '—';
 
-    const sourcesHtml = (r.sources || []).map(s =>
-        `<span class="badge badge-src ${s === STRUCTURAL_SOURCE ? 'badge-src-struct' : 'badge-src-seq'}">${s}</span>`
-    ).join('');
+    const sourcesHtml = (r.sources || []).map(s => {
+        const cls = s === STRUCTURAL_SOURCE ? 'badge-src-struct'
+                  : s === CURATED_SOURCE    ? 'badge-src-curated'
+                  : 'badge-src-seq';
+        return `<span class="badge badge-src ${cls}">${s}</span>`;
+    }).join('');
 
     const exprDetail = exprCount > 0
         ? '<div class="tissue-list">' + (r.expr_experiments || []).map(e =>

@@ -23,3 +23,6 @@ backend/test_ensembl.py
 backend/test_uniprot.py
 backend/test_phase7_direct.py
 backend/test_phase7_parser.py
+
+# CornCyc PGDB — license-restricted; user-supplied via plantcyc.org download
+corncyc/

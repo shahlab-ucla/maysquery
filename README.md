@@ -17,12 +17,15 @@ drill-down details.
   numbers, plus KEGG pathway names (not just IDs).
 - **Pan-life protein pool** — UniProt Swiss-Prot grouped by Enzyme /
   Transporter / Receptor, with per-category truncation visible in the log.
-- **Maize candidates from two parallel discovery lanes:**
+- **Maize candidates from three parallel discovery lanes:**
   - **Sequence lane**: Ensembl Compara plants + Ensembl pan-homology
     (cross-kingdom) + local HMMER fallback
   - **Structure lane**: Foldseek `--alignment-type 2` (TM-align mode)
     against a locally-indexed maize AlphaFold proteome
-  - **Consensus hits** (found by both lanes) are flagged separately
+  - **Curated lane** (opt-in): CornCyc maize gene annotations from the
+    Plant Metabolic Network, mapped via ChEBI → CornCyc compound →
+    reaction → enzyme → maize gene
+  - **Consensus hits** (found by ≥2 lanes) are flagged separately
 - **Per-target enrichment** — AlphaFold pLDDT, Pfam-sliced domain TM,
   Gramene expression breadth (number of Expression Atlas experiments where
   the gene is detected), and Ensembl Compara cross-checks across pan-plant
@@ -38,8 +41,8 @@ m/z  ─▶  Phase 1   CMM + PubChem + ChEBI       ─▶  ChEBI ID (+ conjugate
          Phase 2   Rhea SPARQL + KEGG          ─▶  reactions + pathway names
          Phase 3   UniProtKB                   ─▶  pan-life Enzymes/Transporters/Receptors
          Phase 4   Ensembl + PLAZA  ┐
-                                    ├──▶  consensus reducer  ─▶  maize candidates
-         Phase 4.5 Foldseek vs AFDB ┘
+         Phase 4.5 Foldseek vs AFDB ─┼─▶  consensus reducer  ─▶  maize candidates
+         CornCyc lane (opt-in)      ┘                            (4 lanes: consensus / structure / sequence / curated)
          Phase 5   AlphaFold pLDDT + Gramene expression breadth + 1-to-1 Foldseek (TM)
          Phase 6   InterPro/Pfam domain-sliced Foldseek
          Phase 7   Ensembl Compara plants (pan-plant ortholog cross-check)
@@ -84,12 +87,19 @@ cd maysquery
 
 Then open <http://127.0.0.1:8008/static/index.html>.
 
-## Phase 4.5 — structural-discovery index
+## Optional integrations
 
-Phase 4.5 is *opt-in*. It needs a one-time download + Foldseek-index build of
-the *Zea mays* AlphaFold proteome (~5 GB download, ~1–2 GB persistent
-index, ~20–40 min). The app starts without it and Phase 4.5 simply gets
-skipped; a banner in the UI prompts you to build it when you're ready.
+**Phase 4.5 structural-discovery index** — one-time download + Foldseek-index
+build of the *Zea mays* AlphaFold proteome (~5 GB download, ~1–2 GB
+persistent index, ~20–40 min). The app starts without it and Phase 4.5
+simply gets skipped; a banner in the UI prompts you to build it when you're
+ready.
+
+**CornCyc curated annotation** — drop the PMN-licensed *Zea mays* PGDB
+under `corncyc/<version>/data/` (or set `$CORNCYC_DIR`) to enable the
+fourth discovery lane and the curated pathway-context section. The app
+auto-detects the PGDB on first use and loads in ~0.3 s. License + download:
+<https://plantcyc.org/database_imported/>.
 
 ## Documentation
 

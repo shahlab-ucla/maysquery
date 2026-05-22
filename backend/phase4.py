@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 from models import ProteinCandidate, OrthologMapping, ExecutionLogEntry, PipelineConfig
 from hmmer_runner import run_phmmer_search
 from phase4_5 import execute_phase4_5
+from corncyc_lookup import corncyc_orthologs_for_chebi
 
 logger = logging.getLogger(__name__)
 
@@ -234,9 +235,13 @@ async def query_biomart_homology(uniprot_accession: str) -> List[OrthologMapping
 
 async def execute_phase4(proteins: List[ProteinCandidate], input_data,
                           logs: List[ExecutionLogEntry] = None,
-                          config: Optional[PipelineConfig] = None) -> List[OrthologMapping]:
+                          config: Optional[PipelineConfig] = None,
+                          chebi_id: Optional[str] = None) -> List[OrthologMapping]:
     """
-    Executes Phase 4 using multi-DB queries and consensus reduction.
+    Executes Phase 4 — sequence orthology (Ensembl + PLAZA + pan-homology),
+    plus the parallel structural-discovery lane (Phase 4.5 via Foldseek),
+    plus the curated CornCyc lane (when CornCyc is installed and `chebi_id`
+    is supplied).
     """
     if logs is None:
         logs = []
@@ -302,6 +307,25 @@ async def execute_phase4(proteins: List[ProteinCandidate], input_data,
     # Fold structural-discovery hits into the same consensus reducer so a maize
     # gene found by both sequence and structure earns consensus_score=2.
     all_raw_mappings.extend(structural_mappings)
+
+    # CornCyc curated lane (opt-in; requires the user-supplied PGDB to be present).
+    # Adds maize genes annotated by the Plant Metabolic Network as catalysing
+    # reactions involving the query compound's ChEBI ID. Joins the same consensus
+    # reducer so consensus_score rises for genes also found by Ensembl/Foldseek.
+    if chebi_id:
+        corncyc_mappings = corncyc_orthologs_for_chebi(chebi_id)
+        if corncyc_mappings:
+            all_raw_mappings.extend(corncyc_mappings)
+            logs.append(ExecutionLogEntry(
+                phase=4, database="CornCyc (PMN)", status="success",
+                hits=len(corncyc_mappings),
+                message=f"CornCyc adds {len(corncyc_mappings)} curated maize gene annotation(s) for {chebi_id}"
+            ))
+        else:
+            logs.append(ExecutionLogEntry(
+                phase=4, database="CornCyc (PMN)", status="info", hits=0,
+                message=f"CornCyc has no curated annotation for {chebi_id} (or PGDB not installed)"
+            ))
         
     merged_mappings: Dict[str, OrthologMapping] = {}
     

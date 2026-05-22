@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Metabolite-to-Gene Pipeline</title>
-    <link rel="stylesheet" href="/static/style.css?v=10">
+    <link rel="stylesheet" href="/static/style.css?v=11">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
     <script src="https://unpkg.com/dagre@0.7.4/dist/dagre.js"></script>
@@ -122,6 +122,14 @@
                     <button type="button" id="afdb-install-btn" class="btn-glow afdb-install-btn" style="display:none;">Build Index</button>
                 </div>
 
+                <div id="corncyc-banner" class="afdb-banner afdb-banner-loading" style="display:none;">
+                    <div class="afdb-banner-icon" id="corncyc-banner-icon">⏳</div>
+                    <div class="afdb-banner-body">
+                        <div class="afdb-banner-title" id="corncyc-banner-title">Checking CornCyc curated annotation…</div>
+                        <div class="afdb-banner-detail" id="corncyc-banner-detail"></div>
+                    </div>
+                </div>
+
                 <h2>Pipeline Tracker</h2>
                 <div class="pipeline-tracker">
                     <div class="step" id="step-1"><span class="step-num">1</span><span class="step-label">Metabolite<br>Resolution</span></div>
@@ -198,6 +206,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/app.js?v=19"></script>
+    <script src="/static/app.js?v=20"></script>
 </body>
 </html>

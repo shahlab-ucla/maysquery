@@ -72,37 +72,46 @@ def gene_label_html(gene_id: str, meta_map: Dict, with_link: bool = True) -> str
 # ---------- Discovery-lane classification ----------
 
 STRUCTURAL_SOURCE = "Foldseek-structural"
-SEQUENCE_SOURCES = {"Ensembl", "PLAZA", "BioMart", "EnsemblPanHomology", "Local_HMMER"}
+CURATED_SOURCE    = "CornCyc"
+SEQUENCE_SOURCES  = {"Ensembl", "PLAZA", "BioMart", "EnsemblPanHomology", "Local_HMMER"}
 
 
 def classify_ortholog(sources: List[str]) -> str:
     """
     Classify a maize ortholog by which discovery lanes found it:
-      - 'consensus'      : both sequence- AND structure-based hits
+
+      - 'consensus'      : evidence from ≥2 INDEPENDENT lanes
+                           (sequence + structure, sequence + curated,
+                            structure + curated, or all three)
       - 'sequence_only'  : only sequence-based DBs
       - 'structure_only' : only Foldseek structural discovery
+      - 'curated_only'   : only CornCyc curation (no homology hit)
     """
     s = set(sources or [])
-    has_struct = STRUCTURAL_SOURCE in s
-    has_seq = bool(s - {STRUCTURAL_SOURCE})
-    if has_seq and has_struct:
+    has_struct  = STRUCTURAL_SOURCE in s
+    has_curated = CURATED_SOURCE in s
+    has_seq     = bool(s - {STRUCTURAL_SOURCE, CURATED_SOURCE})
+    lanes_hit   = int(has_seq) + int(has_struct) + int(has_curated)
+    if lanes_hit >= 2:
         return "consensus"
-    if has_struct:
-        return "structure_only"
-    return "sequence_only"
+    if has_struct:  return "structure_only"
+    if has_seq:     return "sequence_only"
+    if has_curated: return "curated_only"
+    return "sequence_only"  # fallback for unknown source labels
 
 
 def lane_label(cls: str) -> str:
     return {
-        "consensus": "Consensus (sequence + structure)",
-        "sequence_only": "Sequence-based",
+        "consensus":      "Consensus (≥2 lanes)",
+        "sequence_only":  "Sequence-based",
         "structure_only": "Structure-based (Foldseek)",
+        "curated_only":   "CornCyc curated",
     }.get(cls, cls)
 
 
 def split_orthologs_by_lane(orthologs: List[Dict]) -> Dict[str, List[Dict]]:
     """Bucket orthologs by classify_ortholog. Each bucket pre-sorted by similarity desc."""
-    buckets = {"consensus": [], "sequence_only": [], "structure_only": []}
+    buckets = {"consensus": [], "sequence_only": [], "structure_only": [], "curated_only": []}
     for o in orthologs or []:
         buckets[classify_ortholog(o.get("sources", []))].append(o)
     for k in buckets:
@@ -120,6 +129,18 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
     domain_by_gene   = {d["maize_gene_model"]: d for d in (res.get("domain_targets") or [])}
     advanced_by_gene = {a["maize_gene_model"]: a for a in (res.get("advanced_homology_targets") or [])}
     gene_meta_map    = res.get("maize_gene_metadata") or {}
+
+    # CornCyc per-gene annotation index (gene → {pathway_ids, pathway_names, reactions, ec})
+    cc_ann = res.get("corncyc_annotation") or {}
+    cc_gene_index: Dict[str, dict] = {}
+    cc_pathway_name = {p["id"]: p["common_name"] for p in (cc_ann.get("pathways") or [])}
+    for g in (cc_ann.get("maize_genes") or []):
+        cc_gene_index[g["gene"]] = {
+            "pathway_ids":   g.get("pathways", []),
+            "pathway_names": [cc_pathway_name.get(pid, pid) for pid in g.get("pathways", [])],
+            "reactions":     g.get("reactions", []),
+            "ec_numbers":    g.get("ec_numbers", []),
+        }
 
     # Reaction context that's shared across all orthologs of the query
     reactions = res.get("reactions") or []
@@ -160,6 +181,7 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
         tissues = (t or {}).get("tissue_expression_fpkm") or {}
 
         meta = gene_meta_map.get(gene) or {}
+        cc_ev = cc_gene_index.get(gene) or {}
         rows.append({
             "gene": gene,
             "gene_symbol":      meta.get("symbol", ""),
@@ -189,6 +211,11 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
             "top_compara_pct_id":      top_compara.get("percent_identity", ""),
             "num_compara_orthologs":   len(adv.get("ensembl_orthologs", []) or []),
             "enriched": t is not None,
+            # CornCyc per-gene evidence
+            "corncyc_pathway_ids":   cc_ev.get("pathway_ids", []),
+            "corncyc_pathway_names": cc_ev.get("pathway_names", []),
+            "corncyc_reactions":     cc_ev.get("reactions", []),
+            "corncyc_ec_numbers":    cc_ev.get("ec_numbers", []),
             # Query-level reaction context (same for every ortholog of this query)
             "top_reaction_rhea_id": top_reaction.get("rhea_id", ""),
             "top_reaction_equation": top_reaction.get("equation") or top_reaction.get("label", ""),
@@ -236,7 +263,8 @@ def summarize_result(res: Dict) -> Dict:
     lanes = split_orthologs_by_lane(orthologs)
     top_target = targets[0] if targets else None
     # Headline gene: prefer a consensus hit if there is one, else best of any lane
-    headline = (lanes["consensus"] or lanes["structure_only"] or lanes["sequence_only"] or [None])[0]
+    headline = (lanes["consensus"] or lanes["structure_only"] or lanes["curated_only"] or lanes["sequence_only"] or [None])[0]
+    cc = res.get("corncyc_annotation") or {}
 
     status = (
         "error" if res.get("error")
@@ -255,6 +283,10 @@ def summarize_result(res: Dict) -> Dict:
         "num_consensus": len(lanes["consensus"]),
         "num_sequence_only": len(lanes["sequence_only"]),
         "num_structure_only": len(lanes["structure_only"]),
+        "num_curated_only": len(lanes["curated_only"]),
+        "corncyc_pathways": cc.get("n_pathways", 0),
+        "corncyc_maize_genes": cc.get("n_maize_genes", 0),
+        "corncyc_top_pathway": (cc.get("pathways") or [{}])[0].get("common_name", ""),
         "num_targets": len(targets),
         "num_domain_targets": len(domain_targets),
         "num_advanced_targets": len(adv),
@@ -322,10 +354,17 @@ a:hover { text-decoration: underline; }
 .badge-consensus      { background: linear-gradient(90deg,#a78bfa 0%,#34d399 100%); color: #fff; font-weight:700; }
 .badge-sequence_only  { background: #fde68a; color: #78350f; }
 .badge-structure_only { background: #c7d2fe; color: #312e81; }
+.badge-curated_only   { background: #fbcfe8; color: #831843; }
+.badge-corncyc        { background: #f0fdf4; color: #166534; border: 1px solid #86efac; font-size: 0.7rem; }
 .badge-src { background: #e5e7eb; color: #374151; margin-right:2px; font-size:0.7rem; }
 .row-consensus td      { background: rgba(167,139,250,0.06) !important; }
 .row-structure_only td { background: rgba(199,210,254,0.10) !important; }
 .row-sequence_only td  { background: rgba(253,230,138,0.08) !important; }
+.row-curated_only td   { background: rgba(251,207,232,0.10) !important; }
+.corncyc-block { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; }
+.corncyc-block h4 { margin: 0 0 6px; color: #166534; }
+.corncyc-pathway-row { padding: 4px 0; border-bottom: 1px dashed #bbf7d0; }
+.corncyc-pathway-row:last-child { border-bottom: none; }
 .dim { color: var(--muted); font-weight: 400; font-size: 0.85em; }
 .gene-meta { color: var(--ink); font-weight: 500; font-size: 0.86em; margin-left: 4px; }
 
@@ -379,6 +418,7 @@ footer { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top
         <div class="summary-cell" style="background: linear-gradient(135deg, rgba(167,139,250,0.4), rgba(52,211,153,0.4));"><div class="lbl">Consensus (Seq + Struct)</div><div class="val">{{ totals.consensus }}</div></div>
         <div class="summary-cell"><div class="lbl">Sequence-only</div><div class="val">{{ totals.sequence_only }}</div></div>
         <div class="summary-cell"><div class="lbl">Structure-only</div><div class="val">{{ totals.structure_only }}</div></div>
+        <div class="summary-cell"><div class="lbl">CornCyc curated-only</div><div class="val">{{ totals.curated_only }}</div></div>
         <div class="summary-cell"><div class="lbl">Enriched (pLDDT + expr)</div><div class="val">{{ totals.targets }}</div></div>
     </div>
 
@@ -466,6 +506,32 @@ footer { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top
     {% else %}
     <div class="kvgrid"><div><div class="k">EC Number</div><div class="v mono">{{ res.input_data.ec_number }}</div></div></div>
     {% endif %}
+    </details>
+    {% endif %}
+
+    {# ---------- CornCyc maize-specific pathway context ---------- #}
+    {% if res.corncyc_annotation %}
+    <details open class="r-drill"><summary><b>CornCyc maize pathway context</b> <span class="dim">{{ res.corncyc_annotation.n_pathways }} pathway(s), {{ res.corncyc_annotation.n_maize_genes }} annotated maize gene(s) · PMN CornCyc {{ res.corncyc_annotation.version }}</span></summary>
+    <div class="corncyc-block">
+        <div style="font-size:0.85rem; color:#166534; margin-bottom: 8px;">
+            Curated PlantCyc/CornCyc pathways involving
+            {% for c in res.corncyc_annotation.compounds %}<b>{{ c.name }}</b>{% if not loop.last %}, {% endif %}{% endfor %}.
+            Maize gene annotations from <a href="https://www.plantcyc.org/" target="_blank">Plant Metabolic Network</a>.
+        </div>
+        {% for p in res.corncyc_annotation.pathways[:25] %}
+            <div class="corncyc-pathway-row">
+                <a href="https://pmn.plantcyc.org/pathway?orgid=CORN&id={{ p.id }}" target="_blank"><b>{{ p.common_name|safe }}</b></a>
+                <span class="dim mono">{{ p.id }}</span>
+                <span class="dim">· {{ p.reactions_touching_compound|length }} matching reaction(s), {{ p.maize_genes|length }} maize gene(s)</span>
+                {% if p.maize_genes %}<div class="mono dim" style="font-size:0.78rem; margin-top:2px;">
+                    {% for g in p.maize_genes[:6] %}{{ gene_label(g, res.maize_gene_metadata)|safe }}{% if not loop.last %} · {% endif %}{% endfor %}{% if p.maize_genes|length > 6 %} <span class="dim">+{{ p.maize_genes|length - 6 }} more</span>{% endif %}
+                </div>{% endif %}
+            </div>
+        {% endfor %}
+        {% if res.corncyc_annotation.pathways|length > 25 %}
+            <div class="dim" style="margin-top:6px;">+{{ res.corncyc_annotation.pathways|length - 25 }} more pathway(s) — see CSV for the full list.</div>
+        {% endif %}
+    </div>
     </details>
     {% endif %}
 
@@ -612,7 +678,9 @@ def generate_csv_report(results: List[Dict]) -> str:
         # Per-query rollups
         "num_reactions", "num_proteins",
         "num_orthologs_total", "num_consensus", "num_sequence_only", "num_structure_only",
-        "num_enriched",
+        "num_curated_only", "num_enriched",
+        # CornCyc query-level summary (same for every row of this query)
+        "corncyc_compound_ids", "corncyc_n_pathways", "corncyc_top_pathway", "corncyc_pathway_list",
         # Query-level reaction context (same on every row of this query — useful for
         # spreadsheet filtering by pathway, e.g. "show me all hits in the TCA cycle")
         "top_reaction_rhea_id", "top_reaction_equation", "top_reaction_ec",
@@ -642,6 +710,9 @@ def generate_csv_report(results: List[Dict]) -> str:
         # Compara (Phase 7)
         "num_compara_orthologs",
         "top_compara_species", "top_compara_gene", "top_compara_gene_url", "top_compara_percent_identity",
+        # CornCyc per-gene annotation (only populated for rows where CornCyc
+        # lists this gene as catalysing a reaction involving the query compound)
+        "corncyc_gene_pathway_ids", "corncyc_gene_pathway_names", "corncyc_gene_reactions",
         # PLAZA orthogroup hint / Foldseek score-breakdown tag
         "plaza_orthogroup",
         # Run status
@@ -662,6 +733,13 @@ def generate_csv_report(results: List[Dict]) -> str:
         orthologs = res.get("orthologs") or []
         enriched_rows = join_enrichment(orthologs, res)
 
+        # CornCyc query-level summary for the CSV
+        cc_ann_q = res.get("corncyc_annotation") or {}
+        cc_compound_ids = "|".join(c.get("id", "") for c in (cc_ann_q.get("compounds") or []))
+        cc_n_pathways   = cc_ann_q.get("n_pathways", 0)
+        cc_top_pathway  = ((cc_ann_q.get("pathways") or [{}])[0]).get("common_name", "") if cc_ann_q.get("pathways") else ""
+        cc_pathway_list = "|".join((p.get("common_name") or p.get("id", "")) for p in (cc_ann_q.get("pathways") or []))
+
         # Reaction context for empty rows
         top_rxn = (res.get("reactions") or [{}])[0] if res.get("reactions") else {}
         rxn_rhea = top_rxn.get("rhea_id", "")
@@ -678,7 +756,8 @@ def generate_csv_report(results: List[Dict]) -> str:
                 q_idx, qtype, query_input, mode,
                 ce.get("chebi_id", ""), ce.get("pubchem_cid", ""), ce.get("monoisotopic_mass", ""),
                 s["num_reactions"], s["num_proteins"],
-                0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0,                                          # +num_curated_only
+                cc_compound_ids, cc_n_pathways, cc_top_pathway, cc_pathway_list,  # CornCyc query-level
                 rxn_rhea, rxn_eq, rxn_ec, rxn_type, pw_name, pw_id, pw_summary,
                 "", "", "", "", "", "", "", "", "", 0, 0,
                 "", "",
@@ -686,6 +765,7 @@ def generate_csv_report(results: List[Dict]) -> str:
                 "", "", "", "", "",       # enriched, enrichment_kind, plddt, n_expression_experiments, expression_experiment_ids
                 "", "", "", "", "", "",
                 0, "", "", "", "",
+                "", "", "",               # corncyc_gene_pathway_ids/names/reactions
                 "",
                 s["status"], res.get("error", ""),
             ])
@@ -705,7 +785,8 @@ def generate_csv_report(results: List[Dict]) -> str:
                 ce.get("chebi_id", ""), ce.get("pubchem_cid", ""), ce.get("monoisotopic_mass", ""),
                 s["num_reactions"], s["num_proteins"],
                 s["num_orthologs"], s["num_consensus"], s["num_sequence_only"], s["num_structure_only"],
-                s["num_targets"],
+                s.get("num_curated_only", 0), s["num_targets"],
+                cc_compound_ids, cc_n_pathways, cc_top_pathway, cc_pathway_list,
                 r["top_reaction_rhea_id"], r["top_reaction_equation"], r["top_reaction_ec"], rxn_type_row,
                 r["top_kegg_pathway_name"], r["top_kegg_pathway_id"], r["kegg_pathway_summary"],
                 overall_rank, lane_counter[cls],
@@ -731,6 +812,9 @@ def generate_csv_report(results: List[Dict]) -> str:
                 r["top_compara_species"], r["top_compara_gene"],
                 url_ensembl_plants_gene(r["top_compara_species"], r["top_compara_gene"]) if r["top_compara_gene"] else "",
                 ("" if r["top_compara_pct_id"] == "" else round(float(r["top_compara_pct_id"]), 1)),
+                "|".join(r.get("corncyc_pathway_ids", []) or []),
+                "|".join(r.get("corncyc_pathway_names", []) or []),
+                "|".join(r.get("corncyc_reactions", []) or []),
                 r["plaza_orthogroup"],
                 s["status"], res.get("error", ""),
             ])
@@ -747,9 +831,11 @@ def generate_html_report(results: List[Dict]) -> str:
         "consensus": sum(s["num_consensus"] for s in summaries),
         "sequence_only": sum(s["num_sequence_only"] for s in summaries),
         "structure_only": sum(s["num_structure_only"] for s in summaries),
+        "curated_only": sum(s["num_curated_only"] for s in summaries),
         "targets": sum(s["num_targets"] for s in summaries),
         "domain_targets": sum(s["num_domain_targets"] for s in summaries),
         "advanced_targets": sum(s["num_advanced_targets"] for s in summaries),
+        "corncyc_pathways": sum(s.get("corncyc_pathways", 0) for s in summaries),
     }
     template = Template(HTML_TEMPLATE)
     return template.render(
