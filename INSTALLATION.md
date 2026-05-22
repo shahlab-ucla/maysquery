@@ -239,6 +239,23 @@ gene/reaction/pathway counts, or ○ "not installed" with the expected path).
 `backend/data/corncyc/` is excluded from git so you don't accidentally
 redistribute the licensed PGDB.
 
+### License attribution
+
+The PMN CornCyc license requires that any derived data carry attribution
+to the source database, its authors, and the modifications made. The
+Maysquery source includes a complete attribution file at
+[`CORNCYC_ATTRIBUTION.txt`](CORNCYC_ATTRIBUTION.txt) that documents:
+
+1. The source database (CornCyc, PMN, version, URLs)
+2. The author list and recommended citation
+3. Every modification Maysquery applies to CornCyc data (parsing,
+   gene-ID case normalisation, ChEBI cross-reference indexing, etc.)
+
+When CornCyc is enabled and a Maysquery query produces CornCyc-derived
+output, the HTML report grows a green attribution footer and the CSV
+grows a `#`-comment preamble that point readers to that file. The
+on-screen dashboard shows attribution under each pathway-context block.
+
 ## Optional: maize AlphaFold structural-discovery index
 
 Phase 4.5 (the "hidden ortholog" structural-discovery lane) needs an

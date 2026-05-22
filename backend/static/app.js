@@ -1201,7 +1201,9 @@ function renderCornCycBlock(ann, geneMetaMap) {
     return `<div class="corncyc-block">
         <div class="corncyc-intro">
             Curated PlantCyc/CornCyc pathways involving ${compoundsLine}. Maize gene annotations from
-            <a href="https://www.plantcyc.org/" target="_blank" class="corncyc-link">Plant Metabolic Network</a>.
+            <a href="https://www.plantcyc.org/" target="_blank" class="corncyc-link">Plant Metabolic Network</a>
+            (authors: Hawkins, Xue, Rhee; CornCyc ${ann.version || ''}).
+            <span class="exec-dim">Full attribution: <code>CORNCYC_ATTRIBUTION.txt</code>.</span>
         </div>
         ${pathwayRows}
         ${overflow}
@@ -1410,6 +1412,22 @@ function renderLaneTopHint(rows) {
     return `<span class="lane-top-hint">top: ${top.gene}${bits.length ? ` (${bits.join(' · ')})` : ''}</span>`;
 }
 
+/**
+ * For consensus hits, return a short subtype tag like "seq + cur" or
+ * "all 3 lanes" so the UI can show *which* lanes agreed.
+ */
+function consensusSubtype(sources) {
+    const s = new Set(sources || []);
+    const seq    = [...s].some(x => x !== STRUCTURAL_SOURCE && x !== CURATED_SOURCE);
+    const struct = s.has(STRUCTURAL_SOURCE);
+    const cur    = s.has(CURATED_SOURCE);
+    if (seq && struct && cur) return 'all 3 lanes';
+    if (seq && struct)        return 'seq + struct';
+    if (seq && cur)           return 'seq + curated';
+    if (struct && cur)        return 'struct + curated';
+    return '';
+}
+
 function renderLaneRow(r, lane) {
     const seq = (r.seq_sim != null) ? r.seq_sim.toFixed(1) + '%' : '—';
     // For sequence-only hits that got the cheap path, TM is unknown (skipped Foldseek)
@@ -1456,11 +1474,15 @@ function renderLaneRow(r, lane) {
             ? '<span class="badge badge-cheap" title="Cheap enrichment ran (pLDDT + Gramene expression breadth). 1-to-1 Foldseek not needed because TM came from Phase 4.5, or was skipped for non-top-N sequence-only hits.">light</span>'
             : '<span class="badge badge-unenriched" title="Filtered out by pLDDT/expression threshold — click Run Foldseek below to retry">filtered</span>');
 
+    const subtype = (lane === 'consensus') ? consensusSubtype(r.sources) : '';
+    const subtypeBadge = subtype ? `<span class="lane-row-subtype">${subtype}</span>` : '';
+
     // ONE-LINE summary in <summary>; details expand to full meta
     return `<details class="data-card lane-row lane-row-${lane}">
         <summary class="lane-row-summary">
             <span class="drill-caret-tiny"></span>
             ${renderMaizeGeneLabel(r.gene)}
+            ${subtypeBadge}
             <span class="lane-row-metric">TM <strong>${tm}</strong></span>
             <span class="lane-row-metric">seq <strong>${seq}</strong></span>
             <span class="lane-row-metric">pLDDT <strong>${pl}</strong></span>

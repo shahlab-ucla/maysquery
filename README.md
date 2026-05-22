@@ -105,4 +105,5 @@ auto-detects the PGDB on first use and loads in ~0.3 s. License + download:
 
 - **[INSTALLATION.md](INSTALLATION.md)** — install guide for Windows, macOS, Linux
 - **[USER_GUIDE.md](USER_GUIDE.md)** — per-phase reference, configuration knobs, output schema
+- **[CORNCYC_ATTRIBUTION.txt](CORNCYC_ATTRIBUTION.txt)** — PMN license-required attribution for CornCyc-derived data in Maysquery outputs
 - **[Metabolite-to-Gene Pipeline Specification.md](Metabolite-to-Gene%20Pipeline%20Specification.md)** — original design spec

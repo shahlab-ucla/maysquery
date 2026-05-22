@@ -636,6 +636,15 @@ a.gene-link:hover {
     margin-left: 4px;
 }
 .lane-row-metric strong { color: var(--text-main); font-weight: 600; }
+.lane-row-subtype {
+    background: linear-gradient(90deg, rgba(167,139,250,0.3), rgba(52,211,153,0.3));
+    color: #f5f3ff;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    border: 1px solid rgba(167,139,250,0.4);
+}
 .lane-top-hint {
     font-size: 0.78rem;
     color: var(--text-muted);

@@ -1,0 +1,149 @@
+=============================================================================
+CornCyc / Plant Metabolic Network (PMN) Attribution
+=============================================================================
+
+The Maysquery pipeline can be configured by the end user to read the CornCyc
+Pathway/Genome Database (PGDB) for the curated discovery lane and the maize
+pathway-context section of its reports. CornCyc is published by the Plant
+Metabolic Network (PMN) under a license that permits redistribution and
+modification of derived data, subject to attribution requirements:
+
+  > License includes right to modify and to redistribute the Databases,
+  > provided that any modified copies of the Databases, or websites from
+  > which such modified copies may be obtained, must clearly and
+  > prominently (i) identify the Database(s) from which they were
+  > derived; (ii) include all applicable copyright notices and author
+  > lists from the Database(s) from which they were derived; and
+  > (iii) identify or summarize all modifications that were made.
+
+This file satisfies clauses (i), (ii), and (iii) for any Maysquery output
+that contains CornCyc-derived data. It is also referenced from the user-
+facing reports (HTML + CSV) when those reports include such data.
+
+Maysquery itself does NOT redistribute the CornCyc flatfiles in its source
+repository — `corncyc/` is excluded by .gitignore. The end user installs the
+PMN-licensed PGDB locally per the instructions in INSTALLATION.md.
+
+
+-----------------------------------------------------------------------------
+(i) SOURCE DATABASE
+-----------------------------------------------------------------------------
+Database name        : CornCyc
+Organism             : Zea mays subsp. mays
+Publisher            : Plant Metabolic Network (PMN)
+Project home page    : https://www.plantcyc.org/databases/corncyc/
+Browser              : https://pmn.plantcyc.org/CORN/
+License              : https://www.plantcyc.org/about/license-agreement
+Underlying platform  : Pathway Tools (SRI International) flatfile format
+                       http://bioinformatics.ai.sri.com/ptools/flatfile-format.html
+
+CornCyc is part of the broader PMN PlantCyc database family, which also
+publishes PlantCyc, AraCyc, MaizeCyc, RiceCyc, SorghumCyc, and other
+species-specific PGDBs. See https://plantcyc.org/databases for the full
+catalog.
+
+
+-----------------------------------------------------------------------------
+(ii) AUTHORS & COPYRIGHT
+-----------------------------------------------------------------------------
+The CornCyc 13.0.0 flatfiles credit the following authors (taken verbatim
+from the header of every data/*.dat file):
+
+    Charles Hawkins
+    Bo Xue
+    Seung Yon Rhee
+
+CornCyc is developed and maintained by the Plant Metabolic Network team at
+the Donald Danforth Plant Science Center. Curation also draws on the wider
+MetaCyc/PlantCyc curation community (see CREDITS records embedded in the
+flatfiles, e.g. `pmngroup`, `caspi`, `dreher`, `xue`, `taltman`).
+
+The version Maysquery has been tested against is:
+
+    Database : CornCyc
+    Version  : 13.0.0
+    Generated: November 26, 2025
+
+Suggested citation for CornCyc / PMN (as published on the PMN site):
+
+    Hawkins C., Ginzburg D., Zhao K., et al. "Plant Metabolic Network 15:
+    A resource of genome-wide metabolism databases for 126 plants and
+    algae." Journal of Integrative Plant Biology (2021).
+    https://doi.org/10.1111/jipb.13163
+
+Please consult the current PMN citation guidelines at
+<https://www.plantcyc.org/about/how-cite-pmn-databases> for the most
+up-to-date recommended citation.
+
+
+-----------------------------------------------------------------------------
+(iii) MODIFICATIONS MADE BY MAYSQUERY
+-----------------------------------------------------------------------------
+Maysquery does not edit the CornCyc flatfiles in place. The "modifications"
+described below are the transformations Maysquery applies in-memory before
+re-presenting CornCyc-derived data in its own outputs. The original
+CornCyc data on disk remains unchanged.
+
+1. PARSING ONLY (no semantic change)
+   `backend/corncyc_loader.py` reads five files from the CornCyc PGDB:
+       compounds.dat   reactions.dat   enzrxns.dat   proteins.dat   pathways.dat
+   The Pathway-Tools attribute-value records are parsed into Python
+   dictionaries indexed by UNIQUE-ID. No values are altered during parsing.
+
+2. CHEBI CROSS-REFERENCE INDEXING
+   Compounds are additionally indexed by their `DBLINKS (CHEBI ...)`,
+   `DBLINKS (PUBCHEM ...)`, and InChI-Key cross-references to enable
+   lookup from a user-supplied ChEBI ID. Cross-reference values are
+   reproduced verbatim from the CornCyc record.
+
+3. CHEBI CONJUGATE-FORM EXPANSION (query side, not on CornCyc itself)
+   For a user query compound, Maysquery resolves the supplied ChEBI ID to
+   the full conjugate-acid/base family via the EBI OLS ontology. Each
+   form is then used to look up CornCyc compound frames. The CornCyc
+   compound records themselves are not modified — only the *query* is
+   expanded before the lookup.
+
+4. MAIZE GENE-ID CASE NORMALISATION
+   CornCyc stores B73 NAM v5 maize gene IDs in upper-case
+   (e.g. `ZM00001EB117970`). Maysquery normalises these to the
+   conventional lower-case prefix (`Zm00001eb117970`) for visual
+   consistency with MaizeGDB / Gramene displays. The numeric portion is
+   unchanged.
+
+5. DERIVED PRESENTATION
+   Maysquery's HTML and CSV reports display the following CornCyc-sourced
+   fields verbatim:
+     * Compound COMMON-NAME, SYNONYMS, DBLINKS values
+     * Reaction COMMON-NAME, EC-NUMBER, LEFT/RIGHT compound participants
+     * Pathway COMMON-NAME, SYNONYMS, REACTION-LIST
+     * Protein GENE associations (after case normalisation, point 4)
+   Each pathway shown in a Maysquery report includes a hyperlink to the
+   corresponding canonical PMN page at
+       https://pmn.plantcyc.org/pathway?orgid=CORN&id=<PathwayID>
+   where the full citation list and curator attributions are displayed.
+
+6. NOT REPRODUCED IN MAYSQUERY OUTPUTS
+   The following CornCyc fields are read but not currently surfaced in
+   Maysquery's UI or reports:
+     * CITATIONS (per-record evidence codes and literature references)
+     * COMMENT (long-form curator notes)
+     * EXPLANATION-CODE
+     * GIBBS-0, ATOM-CHARGES, ATOM-MAPPINGS
+   Users requiring the full provenance for a derived annotation should
+   consult the CornCyc flatfiles on their local install, or the canonical
+   PMN PlantCyc web pages linked from each Maysquery pathway row.
+
+
+-----------------------------------------------------------------------------
+NO WARRANTY / NOT AN OFFICIAL PMN PRODUCT
+-----------------------------------------------------------------------------
+Maysquery is an independent open-source tool published by the Shah Lab at
+UCLA. It is not endorsed by, affiliated with, or warranted by the Plant
+Metabolic Network. The accuracy of CornCyc-derived information in Maysquery
+outputs depends entirely on the CornCyc version installed locally by the
+user. For canonical pathway data and authoritative citations, please always
+cross-reference the PMN PlantCyc website at https://pmn.plantcyc.org/CORN/
+
+-----------------------------------------------------------------------------
+END
+-----------------------------------------------------------------------------
