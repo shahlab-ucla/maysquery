@@ -112,17 +112,42 @@ document.addEventListener('DOMContentLoaded', () => {
     afdbBanner.refresh();
     const b = afdbBanner.button();
     if (b) b.addEventListener('click', () => afdbBanner.install());
+
     corncycBanner.refresh();
+    const ccInstr = document.getElementById('corncyc-instructions-btn');
+    if (ccInstr) ccInstr.addEventListener('click', async () => {
+        // Pull the current expected_path before showing the panel
+        let expected = '';
+        try {
+            const r = await fetch('/api/corncyc/status');
+            if (r.ok) expected = (await r.json()).expected_path || '';
+        } catch (_) { /* ignore */ }
+        corncycBanner.showInstructions(expected);
+    });
+    const ccRecheck = document.getElementById('corncyc-recheck-btn');
+    if (ccRecheck) ccRecheck.addEventListener('click', async () => {
+        ccRecheck.disabled = true;
+        ccRecheck.textContent = 'Checking…';
+        try { await corncycBanner.refresh(); }
+        finally {
+            ccRecheck.disabled = false;
+            ccRecheck.textContent = 'Check again';
+        }
+    });
 });
 
 // ---------- CornCyc availability banner ----------
 const corncycBanner = {
-    root:   () => document.getElementById('corncyc-banner'),
-    icon:   () => document.getElementById('corncyc-banner-icon'),
-    title:  () => document.getElementById('corncyc-banner-title'),
-    detail: () => document.getElementById('corncyc-banner-detail'),
+    root:    () => document.getElementById('corncyc-banner'),
+    icon:    () => document.getElementById('corncyc-banner-icon'),
+    title:   () => document.getElementById('corncyc-banner-title'),
+    detail:  () => document.getElementById('corncyc-banner-detail'),
+    instr:   () => document.getElementById('corncyc-instructions-btn'),
+    recheck: () => document.getElementById('corncyc-recheck-btn'),
+    panel:   () => document.getElementById('corncyc-install-panel'),
+    pathSpan:() => document.getElementById('corncyc-expected-path'),
 
-    setState(stateClass, icon, title, detail) {
+    setState(stateClass, icon, title, detail, opts) {
         const r = this.root(); if (!r) return;
         r.style.display = 'flex';
         r.classList.remove('afdb-banner-loading','afdb-banner-ready','afdb-banner-missing','afdb-banner-error');
@@ -130,6 +155,23 @@ const corncycBanner = {
         if (this.icon())   this.icon().textContent = icon;
         if (this.title())  this.title().textContent = title;
         if (this.detail()) this.detail().textContent = detail || '';
+
+        // Action buttons: show instructions + check-again only when not loaded
+        const showActions = (opts && opts.showActions);
+        const instr = this.instr();   if (instr)   instr.style.display   = showActions ? 'inline-block' : 'none';
+        const reck  = this.recheck(); if (reck)    reck.style.display    = showActions ? 'inline-block' : 'none';
+        // Auto-collapse the help panel once CornCyc is loaded
+        const panel = this.panel();
+        if (panel && stateClass === 'afdb-banner-ready') panel.style.display = 'none';
+    },
+
+    showInstructions(expectedPath) {
+        const panel = this.panel();
+        if (!panel) return;
+        const ps = this.pathSpan();
+        if (ps && expectedPath) ps.textContent = expectedPath.replace(/\\/g, '/') + '/<version>/data/';
+        panel.style.display = (panel.style.display === 'none' || !panel.style.display) ? 'block' : 'none';
+        if (panel.style.display === 'block') panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     },
 
     async refresh() {
@@ -137,6 +179,8 @@ const corncycBanner = {
             const resp = await fetch('/api/corncyc/status');
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const s = await resp.json();
+            const ps = this.pathSpan();
+            if (ps && s.expected_path) ps.textContent = s.expected_path.replace(/\\/g, '/') + '/<version>/data/';
             if (s.available && s.loaded) {
                 this.setState('afdb-banner-ready', '✓',
                     `CornCyc ${s.version} loaded — ${s.maize_genes} maize genes annotated`,
@@ -144,14 +188,16 @@ const corncycBanner = {
             } else if (s.available) {
                 this.setState('afdb-banner-missing', '◷',
                     `CornCyc ${s.version} detected (will load on first query)`,
-                    s.data_dir);
+                    s.data_dir, { showActions: true });
             } else {
                 this.setState('afdb-banner-missing', '○',
-                    'CornCyc curated annotation not installed',
-                    `Drop the PMN-licensed PGDB at ${s.expected_path || 'corncyc/<version>/data/'} to enable the curated discovery lane and pathway context.`);
+                    'CornCyc curated annotation not installed (optional)',
+                    `Click "Install instructions" to set it up — it powers the curated discovery lane.`,
+                    { showActions: true });
             }
         } catch (e) {
-            this.setState('afdb-banner-error', '✗', 'CornCyc status check failed', String(e));
+            this.setState('afdb-banner-error', '✗', 'CornCyc status check failed', String(e),
+                { showActions: true });
         }
     },
 };

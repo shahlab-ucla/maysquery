@@ -21,7 +21,7 @@ cyan '   Maysquery Automated Setup & Installation (Unix)     '
 cyan '========================================================'
 
 # ---------- 1. Platform detection ----------
-yellow '[1/6] Detecting platform...'
+yellow '[1/7] Detecting platform...'
 OS=$(uname -s)
 case "$OS" in
   Darwin) PLATFORM=mac;   green "  -> macOS" ;;
@@ -30,7 +30,7 @@ case "$OS" in
 esac
 
 # ---------- 2. Bio-binary install (Foldseek + HMMER) ----------
-yellow '[2/6] Installing Foldseek + HMMER...'
+yellow '[2/7] Installing Foldseek + HMMER...'
 need_install() { ! command -v "$1" >/dev/null 2>&1; }
 
 if [ "$PLATFORM" = "mac" ]; then
@@ -74,7 +74,7 @@ else
 fi
 
 # ---------- 3. Python venv ----------
-yellow '[3/6] Setting up Python virtual environment...'
+yellow '[3/7] Setting up Python virtual environment...'
 cd "$(dirname "$0")/backend" || { red "Cannot cd into ./backend"; exit 1; }
 
 if [ ! -d venv ]; then
@@ -85,13 +85,13 @@ else
 fi
 
 # ---------- 4. Python deps ----------
-yellow '[4/6] Installing Python dependencies...'
+yellow '[4/7] Installing Python dependencies...'
 ./venv/bin/python -m pip install --upgrade pip
 ./venv/bin/pip install -r requirements.txt
 green "  Done."
 
 # ---------- 5. Maize proteome cache (small, for HMMER fallback) ----------
-yellow '[5/6] Pre-downloading the Zea mays reference proteome (~12 MB) for HMMER fallback...'
+yellow '[5/7] Pre-downloading the Zea mays reference proteome (~12 MB) for HMMER fallback...'
 ./venv/bin/python - <<'PY'
 import asyncio, os
 from hmmer_runner import download_maize_proteome
@@ -104,7 +104,7 @@ asyncio.run(main())
 PY
 
 # ---------- 6. Optional: maize AlphaFold structural-discovery index ----------
-yellow '[6/6] Maize AlphaFold structural-discovery index'
+yellow '[6/7] Maize AlphaFold structural-discovery index'
 echo  '      This powers Phase 4.5 (structure-guided ortholog discovery).'
 echo  '      Cost: ~5 GB tar download + ~1-2 GB final foldseek index + 20-40 min one-time build.'
 echo  '      You can skip now and build it later via the UI button or:'
@@ -114,6 +114,56 @@ case "$ans" in
   y|Y|yes|YES) ./venv/bin/python install_maize_afdb.py || yellow "      Build failed — retry later via the UI." ;;
   *)           echo  "      Skipped. Phase 4.5 will be disabled until the index is built." ;;
 esac
+
+# ---------- 7. Optional: CornCyc curated maize PGDB ----------
+REPO_ROOT_ABS=$(cd .. && pwd)
+CORNCYC_ROOT="$REPO_ROOT_ABS/corncyc"
+yellow '[7/7] CornCyc curated maize pathway annotation'
+echo  '      Powers the curated discovery lane + dashboard pathway-context section.'
+echo  '      Cost: ~50-150 MB download + license-acceptance form on plantcyc.org.'
+
+if [ -f "$CORNCYC_ROOT/default-version" ]; then
+  green "      CornCyc already detected at $CORNCYC_ROOT — skipping."
+else
+  echo  '      You can skip now and install CornCyc later via the UI banner'
+  echo  "      ('Install instructions' button) or by following INSTALLATION.md."
+  read -r -p "      Open the PMN download page now and walk through install? (y/N) " ans
+  case "$ans" in
+    y|Y|yes|YES)
+      cyan  '      Opening https://www.plantcyc.org/downloads in your browser...'
+      if   command -v xdg-open >/dev/null 2>&1; then xdg-open "https://www.plantcyc.org/downloads" >/dev/null 2>&1 &
+      elif command -v open     >/dev/null 2>&1; then open    "https://www.plantcyc.org/downloads" >/dev/null 2>&1 &
+      else yellow "      (couldn't open browser; visit the URL manually)"
+      fi
+      echo
+      echo  '      Next steps (in the browser):'
+      echo  '        1. Sign in / register with PMN (free for non-commercial use)'
+      echo  '        2. Accept the license agreement for CornCyc'
+      echo  '        3. Download the tarball (typically corncyc-13.0.0.tar.gz)'
+      echo
+      echo  '      Then extract and move it into this repo:'
+      yellow '        tar xzf corncyc-13.0.0.tar.gz'
+      yellow "        mv corncyc \"$CORNCYC_ROOT\""
+      echo
+      echo  '      Final directory layout should look like:'
+      echo  "        $CORNCYC_ROOT/13.0.0/data/compounds.dat"
+      echo
+      read -r -p "      Press Enter once you've finished extracting (or just press Enter to skip) "
+      if [ -d "$CORNCYC_ROOT" ]; then
+        STATUS_JSON=$(./venv/bin/python -c "import sys; sys.path.insert(0,'.'); import json; from corncyc_loader import get_status; print(json.dumps(get_status()))" 2>/dev/null || echo '{}')
+        if echo "$STATUS_JSON" | grep -q '"available": true'; then
+          green "      ✓ CornCyc detected"
+          echo  "      $STATUS_JSON"
+        else
+          yellow "      ⚠ CornCyc not yet detected at $CORNCYC_ROOT — drop it there later and click 'Check again' in the UI."
+        fi
+      else
+        yellow "      No $CORNCYC_ROOT found yet. Extract the tarball there later; the app will auto-detect."
+      fi
+      ;;
+    *) echo  '      Skipped. The curated lane will stay disabled until CornCyc is installed.' ;;
+  esac
+fi
 
 cyan '========================================================'
 green '                  SETUP COMPLETE!                       '

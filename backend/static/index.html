@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Metabolite-to-Gene Pipeline</title>
-    <link rel="stylesheet" href="/static/style.css?v=12">
+    <link rel="stylesheet" href="/static/style.css?v=13">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
     <script src="https://unpkg.com/dagre@0.7.4/dist/dagre.js"></script>
@@ -128,6 +128,47 @@
                         <div class="afdb-banner-title" id="corncyc-banner-title">Checking CornCyc curated annotation…</div>
                         <div class="afdb-banner-detail" id="corncyc-banner-detail"></div>
                     </div>
+                    <div class="afdb-banner-actions">
+                        <button type="button" id="corncyc-instructions-btn" class="btn-secondary corncyc-btn" style="display:none;">Install instructions</button>
+                        <button type="button" id="corncyc-recheck-btn" class="btn-secondary corncyc-btn" style="display:none;">Check again</button>
+                    </div>
+                </div>
+                <div id="corncyc-install-panel" class="corncyc-install-panel" style="display:none;">
+                    <h4>Install CornCyc curated annotation</h4>
+                    <p class="corncyc-install-blurb">
+                        CornCyc is license-restricted but free for non-commercial use. PMN gates the download behind a
+                        license-acceptance form on plantcyc.org — they need each user to actively agree before issuing
+                        the tarball. Five steps:
+                    </p>
+                    <ol class="corncyc-install-steps">
+                        <li>
+                            Open the PMN downloads page and sign in or register (free).
+                            <a href="https://www.plantcyc.org/downloads" target="_blank" rel="noopener" class="btn-secondary corncyc-link-btn">↗ Open plantcyc.org/downloads</a>
+                            <span class="corncyc-step-aside">CornCyc-specific landing: <a href="https://www.plantcyc.org/databases/corncyc/" target="_blank" rel="noopener">plantcyc.org/databases/corncyc/</a></span>
+                        </li>
+                        <li>Accept the license agreement and request the CornCyc download. PMN will issue a tarball, typically named <code>corncyc-13.0.0.tar.gz</code> (~50–150 MB).</li>
+                        <li>
+                            Extract the archive.
+                            <pre class="corncyc-cmd">tar xzf corncyc-13.0.0.tar.gz                # macOS / Linux / WSL
+tar.exe -xzf corncyc-13.0.0.tar.gz           # Windows (built-in tar)</pre>
+                        </li>
+                        <li>
+                            Move the extracted folder so the final layout sits under this Maysquery install at
+                            <code id="corncyc-expected-path">corncyc/&lt;version&gt;/data/</code>.
+                            Alternative layouts are auto-detected:
+                            <ul class="corncyc-layouts">
+                                <li><code>&lt;path&gt;/corncyc/13.0.0/data/</code> (canonical)</li>
+                                <li><code>&lt;path&gt;/corncyc/corncyc-13.0.0/data/</code> (variant naming)</li>
+                                <li><code>&lt;path&gt;/corncyc/data/</code> (already <code>cd</code>'d into the version dir)</li>
+                            </ul>
+                            Or set the <code>CORNCYC_DIR</code> environment variable to a directory elsewhere on disk.
+                        </li>
+                        <li>Click <b>Check again</b> on the banner above (no server restart needed).</li>
+                    </ol>
+                    <p class="corncyc-install-blurb">
+                        Full details + per-platform commands: <a href="https://github.com/shahlab-ucla/maysquery/blob/main/INSTALLATION.md#optional-corncyc-curated-maize-pathway-annotation" target="_blank">INSTALLATION.md</a>.
+                        License-attribution notice (required by PMN): <a href="https://github.com/shahlab-ucla/maysquery/blob/main/CORNCYC_ATTRIBUTION.txt" target="_blank">CORNCYC_ATTRIBUTION.txt</a>.
+                    </p>
                 </div>
 
                 <h2>Pipeline Tracker</h2>
@@ -206,6 +247,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/app.js?v=21"></script>
+    <script src="/static/app.js?v=22"></script>
 </body>
 </html>

@@ -232,35 +232,107 @@ Then open `http://127.0.0.1:8008/static/index.html`.
 
 ## Optional: CornCyc curated maize pathway annotation
 
-CornCyc (the Plant Metabolic Network's *Zea mays* Pathway/Genome Database) is
-license-restricted but free for non-commercial use. Once enabled, it powers:
+CornCyc (the Plant Metabolic Network's *Zea mays* Pathway/Genome Database)
+is license-restricted but free for non-commercial use. Once installed, it
+powers:
 
 - A **curated discovery lane** (4th lane alongside sequence, structure, and
   consensus) — maize genes annotated by PMN as catalysing reactions
-  involving the query compound, even when sequence/structure search misses them.
+  involving the query compound, even when sequence/structure search misses
+  them.
 - A dedicated **"CornCyc maize pathway context"** section in the dashboard
   showing every PlantCyc pathway the compound participates in, with the
   list of maize genes per pathway (linked to MaizeGDB).
-- New `corncyc_*` columns in the CSV report and a green-tinted block in the
-  HTML report.
+- New `corncyc_*` columns in the CSV report and a green-tinted block in
+  the HTML report.
 
-To enable:
+### Why this is a manual download
 
-1. Agree to the PMN license and download the CornCyc PGDB tarball from
-   <https://plantcyc.org/database_imported/> (latest tested: CornCyc 13.0.0).
-2. Extract the archive somewhere on disk. The flatfiles must end up at
-   `<dir>/<version>/data/` (the structure the PMN ships in).
-3. Either:
-   - Drop the extracted folder at the repo root as `corncyc/<version>/data/`
-     (default), or
-   - Set the `CORNCYC_DIR` environment variable to the directory that
-     contains `<version>/data/`.
+PMN gates downloads behind a license-acceptance form on plantcyc.org —
+they need each user to actively agree to the license terms (name,
+email, institution, license checkbox). No anonymous direct-download URL
+exists. We can't legally automate this, but the rest of the setup is
+a handful of clicks.
 
-The pipeline auto-detects the PGDB on first use and loads it in ~0.3 s. A
-banner above the pipeline tracker shows the current status (✓ loaded with
-gene/reaction/pathway counts, or ○ "not installed" with the expected path).
+### Step-by-step install
 
-`backend/data/corncyc/` is excluded from git so you don't accidentally
+1. **Open the PMN downloads page** and sign in / register:
+   <https://www.plantcyc.org/downloads>
+
+   The CornCyc-specific landing page is
+   <https://www.plantcyc.org/databases/corncyc/>. Both routes end at the
+   same form.
+
+2. **Accept the license and request the download.** PMN asks for your
+   name, institutional email, and a one-time license-agreement
+   checkbox. You'll either get an immediate download link or one
+   emailed within a few minutes. The file is typically named
+   `corncyc-13.0.0.tar.gz` (~50–150 MB compressed).
+
+3. **Extract the tarball.** On any platform:
+
+   ```bash
+   # Linux / macOS / WSL
+   tar xzf corncyc-13.0.0.tar.gz
+   ```
+
+   ```powershell
+   # Windows PowerShell (uses the built-in tar.exe on Windows 10+)
+   tar.exe -xzf corncyc-13.0.0.tar.gz
+   ```
+
+   The archive contains a top-level directory like `corncyc/` or
+   `corncyc-13.0.0/` with a versioned subdirectory holding `data/`,
+   `input/`, `kb/`, `reports/`.
+
+4. **Move the extracted folder into the Maysquery repo.** The pipeline
+   looks under `<repo_root>/corncyc/` by default. The detector is
+   tolerant of the exact layout — any of these will work:
+
+   ```
+   maysquery/corncyc/13.0.0/data/compounds.dat                 ← canonical
+   maysquery/corncyc/data/compounds.dat                        ← cd'd in
+   maysquery/corncyc/corncyc-13.0.0/data/compounds.dat         ← variant
+   ```
+
+   On Windows:
+   ```powershell
+   Move-Item -Path C:\Downloads\corncyc C:\path\to\maysquery\corncyc
+   ```
+
+   On macOS / Linux:
+   ```bash
+   mv corncyc /path/to/maysquery/corncyc
+   ```
+
+   If you want to keep the PGDB elsewhere (e.g. a shared lab drive),
+   set the `CORNCYC_DIR` environment variable to the directory that
+   contains `<version>/data/`:
+
+   ```powershell
+   # Windows (per-session)
+   $env:CORNCYC_DIR = "D:\shared\corncyc"
+   # Windows (persistent for your account)
+   setx CORNCYC_DIR "D:\shared\corncyc"
+   ```
+
+   ```bash
+   # macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
+   export CORNCYC_DIR=/srv/shared/corncyc
+   ```
+
+5. **Verify** with one of:
+   - Restart the app (`Ctrl-C` then `.\run.ps1` / `./run.sh`) and look at
+     the CornCyc status banner — it should turn green with
+     `CornCyc 13.0.0 loaded — N maize genes annotated`.
+   - Or click **Check again** on the CornCyc banner in the running UI
+     (no restart needed).
+   - Or from PowerShell:
+     ```powershell
+     curl http://127.0.0.1:8008/api/corncyc/status
+     ```
+
+`corncyc/` is in `.gitignore`, so you can't accidentally commit or
 redistribute the licensed PGDB.
 
 ### License attribution
