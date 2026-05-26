@@ -3,6 +3,7 @@ import logging
 import random
 import asyncio
 import os
+import subprocess
 from typing import List, Optional
 from models import OrthologMapping, ValidatedTarget, ExecutionLogEntry, PipelineConfig
 
@@ -28,18 +29,23 @@ async def get_uniprot_for_maize_gene(maize_gene: str) -> str:
 
 async def validate_structure_alphafold(uniprot_id: str) -> float:
     """Live query to AlphaFold DB for average pLDDT."""
+    if not uniprot_id:
+        return 0.0
     url = f"https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
-    
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=10.0)
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(url, timeout=15.0)
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list) and len(data) > 0:
                     return data[0].get("global_metric_value", 75.0)
+            elif resp.status_code != 404:
+                logger.warning(f"AlphaFold API HTTP {resp.status_code} for {uniprot_id}")
     except Exception as e:
-        logger.error(f"AlphaFold DB error for {uniprot_id}: {e}")
-        
+        logger.error(
+            f"AlphaFold DB error for {uniprot_id!r} "
+            f"({type(e).__name__}): {e!r}"
+        )
     return 0.0
 
 # Module-level cache for the Gramene expression-breadth lookup.
@@ -176,32 +182,43 @@ async def calculate_tm_score_foldseek(query_uniprot_id: str, target_uniprot_id: 
     ]
     
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
+        # Use asyncio.to_thread + subprocess.run for cross-platform reliability —
+        # Windows asyncio's create_subprocess_exec raises NotImplementedError on
+        # the default SelectorEventLoop (which uvicorn --reload uses).
+        # The empty `e` in the old `logger.error(f"Error running Foldseek: {e}")`
+        # was exactly that — repr would have shown `NotImplementedError()`.
+        result = await asyncio.to_thread(
+            subprocess.run, cmd,
             cwd=tmp_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=300,
         )
-        stdout, stderr = await process.communicate()
-        
-        if process.returncode == 0 and os.path.exists(output_tsv):
-            # Parse the output TSV
+        if result.returncode == 0 and os.path.exists(output_tsv):
             with open(output_tsv, "r") as f:
                 lines = f.readlines()
                 if lines:
-                    # e.g. P07954.pdb Zm000...pdb 100 100 0.85 2.1
                     parts = lines[0].strip().split()
                     if len(parts) >= 5:
                         return float(parts[4])
-                        
         else:
-            logger.warning(f"Foldseek failed: {stderr.decode()}")
-    except FileNotFoundError:
-        # Foldseek binary is not installed on this system PATH
-        logger.warning("Foldseek binary not found. Falling back to mock TM-score.")
+            stderr_text = result.stderr.decode(errors="replace").strip()
+            logger.warning(
+                f"Foldseek 1-to-1 failed (rc={result.returncode}, "
+                f"query={os.path.basename(query_pdb)}, target={os.path.basename(target_pdb)}). "
+                f"stderr={stderr_text[:300]!r}"
+            )
+    except FileNotFoundError as e:
+        logger.warning(
+            f"Foldseek launch failed — 'wsl' or 'foldseek' not on PATH. "
+            f"Falling back to mock TM-score. Detail: {e!r}"
+        )
+    except subprocess.TimeoutExpired:
+        logger.error(f"Foldseek 1-to-1 timed out after 300s for {query_uniprot_id} vs {target_uniprot_id}")
     except Exception as e:
-        logger.error(f"Error running Foldseek: {e}")
-        
+        logger.error(
+            f"Error running Foldseek ({type(e).__name__}): {e!r}. Cmd: {' '.join(cmd)!r}"
+        )
+
     # Mock fallback
     return round(random.uniform(0.5, 0.99), 2)
 

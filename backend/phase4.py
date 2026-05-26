@@ -61,7 +61,10 @@ async def _fetch_uniprot_species_and_ensembl(client: httpx.AsyncClient, uniprot_
                     gene_ids.append(gid)
             gene_ids = list(dict.fromkeys(gene_ids))  # dedup, preserve order
     except Exception as e:
-        logger.error(f"UniProt REST lookup failed for {uniprot_accession}: {e}")
+        logger.error(
+            f"UniProt REST lookup failed for {uniprot_accession} "
+            f"({type(e).__name__}): {e!r}"
+        )
 
     _UNIPROT_ENSEMBL_CACHE[uniprot_accession] = (species_slug, gene_ids)
     return species_slug, gene_ids

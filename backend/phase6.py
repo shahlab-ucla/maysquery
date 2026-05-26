@@ -1,6 +1,7 @@
 import httpx
 import logging
 import os
+import subprocess
 import random
 import asyncio
 from typing import List, Optional, Dict
@@ -69,23 +70,24 @@ async def run_foldseek_domain(query_pdb: str, target_pdb: str, query_id: str, ta
     output_tsv = os.path.join(tmp_dir, f"{query_id}_{target_id}_domain_results.tsv")
     tmp_foldseek = os.path.join(tmp_dir, "fs_tmp_domain")
     os.makedirs(tmp_foldseek, exist_ok=True)
-    
-    cmd = [
-        "foldseek", "easy-search",
-        query_pdb, target_pdb, output_tsv, tmp_foldseek,
-        "--exhaustive-search", "1",
-        "--format-output", "query,target,qlen,tlen,alntmscore,rmsd"
-    ]
-    
+
+    # NOTE: on Windows we need the `wsl` prefix — the unprefixed foldseek call
+    # below only works on Linux/macOS where the binary is native on PATH.
+    cmd_base = ["foldseek", "easy-search", query_pdb, target_pdb, output_tsv, tmp_foldseek,
+                "--exhaustive-search", "1",
+                "--format-output", "query,target,qlen,tlen,alntmscore,rmsd"]
+    cmd = (["wsl"] + cmd_base) if os.name == "nt" else cmd_base
+
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        # asyncio.create_subprocess_exec is unreliable under uvicorn --reload on
+        # Windows (SelectorEventLoop -> NotImplementedError with empty str(e)).
+        # Use the same to_thread+subprocess.run pattern as hmmer_runner.py.
+        result = await asyncio.to_thread(
+            subprocess.run, cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=300,
         )
-        stdout, stderr = await process.communicate()
-        
-        if process.returncode == 0 and os.path.exists(output_tsv):
+        if result.returncode == 0 and os.path.exists(output_tsv):
             with open(output_tsv, "r") as f:
                 lines = f.readlines()
                 if lines:
@@ -93,13 +95,20 @@ async def run_foldseek_domain(query_pdb: str, target_pdb: str, query_id: str, ta
                     if len(parts) >= 5:
                         return float(parts[4])
         else:
-            logger.warning(f"Foldseek domain search failed: {stderr.decode()}")
-    except FileNotFoundError:
-        pass
+            stderr_text = result.stderr.decode(errors="replace").strip()
+            logger.warning(
+                f"Foldseek domain search failed (rc={result.returncode}, "
+                f"query={query_id}, target={target_id}). stderr={stderr_text[:300]!r}"
+            )
+    except FileNotFoundError as e:
+        logger.warning(f"Foldseek launch failed for domain search: {e!r}. Falling back to mock TM-score.")
+    except subprocess.TimeoutExpired:
+        logger.error(f"Foldseek domain search timed out after 300s for {query_id} vs {target_id}")
     except Exception as e:
-        logger.error(f"Error running Foldseek domain search: {e}")
-        
-    # Mock fallback if foldseek isn't installed
+        logger.error(
+            f"Error running Foldseek domain search ({type(e).__name__}): {e!r}. Cmd: {' '.join(cmd)!r}"
+        )
+
     return round(random.uniform(0.6, 0.99), 2)
 
 async def process_domain_target(target: ValidatedTarget, query_uniprot_id: str) -> Optional[DomainValidatedTarget]:

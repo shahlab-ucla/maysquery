@@ -59,14 +59,33 @@ Windows. WSL is now ready.
 
 ### Step 1 — clone the repo
 
-In regular PowerShell (not the WSL terminal):
+In regular PowerShell (not the WSL terminal). **Pick a directory you own** —
+your user profile, `Documents`, or `C:\src` are all fine. Do **not** clone
+into `C:\Windows\System32` even if PowerShell happens to start there; Windows
+file-permission and antivirus rules make that path painful.
 
 ```powershell
+cd $HOME\Documents      # or any directory you own
 git clone https://github.com/shahlab-ucla/maysquery.git
 cd maysquery
 ```
 
-### Step 2 — run the automated setup
+### Step 2 — allow PowerShell to run local scripts (one-time)
+
+Windows blocks unsigned local `.ps1` scripts by default. The error looks
+like `setup.ps1 cannot be loaded because running scripts is disabled on this
+system`. Run this **once per PowerShell window** to allow our scripts:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+`-Scope Process` is the safest choice — the change only affects the current
+PowerShell session, no persistent system setting. Confirm with **Y** when
+prompted. (If you want it persistent for your account, use `-Scope CurrentUser`
+instead.)
+
+### Step 3 — run the automated setup
 
 ```powershell
 .\setup.ps1
@@ -86,7 +105,7 @@ This walks through six steps:
 If any step fails the script prints the failing command and continues — you
 can run individual steps manually (see the [manual fallback](#manual-fallback-windows)).
 
-### Step 3 — launch the app
+### Step 4 — launch the app
 
 ```powershell
 .\run.ps1
@@ -94,6 +113,11 @@ can run individual steps manually (see the [manual fallback](#manual-fallback-wi
 
 Your default browser opens to `http://127.0.0.1:8008/static/index.html`.
 Leave the PowerShell window running while you use the app; `Ctrl-C` to stop.
+
+> `setup.ps1` and `run.ps1` must both be invoked from the **repo root** (the
+> directory containing `backend/`, `setup.ps1`, `run.ps1`). If you see
+> `The term '.\run.ps1' is not recognized` you almost certainly `cd`'d into
+> `backend/` first — `cd ..` and try again.
 
 ### Manual fallback (Windows)
 
@@ -290,6 +314,33 @@ resumable, so a killed run picks up where it left off.
 ---
 
 ## Troubleshooting
+
+### `setup.ps1 cannot be loaded because running scripts is disabled`
+
+PowerShell blocks unsigned scripts by default. Run this once in the same
+PowerShell window before invoking `setup.ps1` or `run.ps1`:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+### `Form data requires "python-multipart" to be installed`
+
+You're running an older clone whose `requirements.txt` predated the fix.
+Either `git pull && .\backend\venv\Scripts\pip install -r backend\requirements.txt`,
+or install just the missing dep:
+
+```powershell
+.\backend\venv\Scripts\python.exe -m pip install python-multipart
+```
+
+### AFDB install died with `tarfile.ReadError: unexpected end of data`
+
+A previous download got interrupted and left a truncated tar on disk. The
+current installer detects this and deletes the broken tar automatically — so
+just run `install_maize_afdb.py` (or click **Build Index** in the UI) again.
+The downloader now resumes from where it left off and retries on transient
+network errors up to 5 times.
 
 ### "Port 8008 already in use"
 

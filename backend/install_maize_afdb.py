@@ -112,41 +112,106 @@ async def _emit(cb: Optional[ProgressCB], message: str, stage: Optional[str] = N
 
 # ----- Step 1: download -----
 
-async def download_proteome(progress: Optional[ProgressCB] = None) -> Path:
-    """Stream-download the maize AlphaFold proteome tar."""
+async def _expected_tar_size(client: httpx.AsyncClient) -> int:
+    """HEAD the source URL to learn the expected tar size in bytes."""
+    try:
+        r = await client.head(MAIZE_PROTEOME_URL, timeout=30.0)
+        return int(r.headers.get("content-length", 0))
+    except Exception:
+        return 0
+
+
+async def download_proteome(progress: Optional[ProgressCB] = None, max_retries: int = 5) -> Path:
+    """
+    Stream-download the maize AlphaFold proteome tar with resume + retry.
+
+    Handles three failure modes that have all been hit in the wild:
+      1. Network drops mid-stream → reconnect with Range header, resume
+      2. Server doesn't honour Range (returns 200 instead of 206) → restart
+      3. Partial tar left from a previous failed run is silently truncated →
+         compare on-disk size to Content-Length and only reuse when complete
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if TAR_PATH.exists() and TAR_PATH.stat().st_size > 1_000_000_000:
-        await _emit(progress, f"Reusing existing tar at {TAR_PATH} ({TAR_PATH.stat().st_size / 1e9:.2f} GB)")
-        return TAR_PATH
 
-    await _emit(progress, f"Downloading {MAIZE_PROTEOME_URL} (this can take many minutes)", stage="download", pct=0.0)
+    async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=None)) as client:
+        expected = await _expected_tar_size(client)
 
-    # Append to a partial file so re-runs resume — only if the server supports Range.
-    resume_from = TAR_PATH.stat().st_size if TAR_PATH.exists() else 0
-    headers = {"Range": f"bytes={resume_from}-"} if resume_from else {}
-    mode = "ab" if resume_from else "wb"
+        # Reuse only if size matches expected (within 1 MB slack for header drift)
+        if TAR_PATH.exists() and expected and abs(TAR_PATH.stat().st_size - expected) < 1_000_000:
+            await _emit(progress, f"Reusing complete tar at {TAR_PATH} ({TAR_PATH.stat().st_size / 1e9:.2f} GB)")
+            return TAR_PATH
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
-        async with client.stream("GET", MAIZE_PROTEOME_URL, headers=headers) as resp:
-            if resp.status_code not in (200, 206):
-                raise RuntimeError(f"Download failed: HTTP {resp.status_code} {resp.reason_phrase}")
-            total = int(resp.headers.get("content-length", 0)) + resume_from
-            downloaded = resume_from
-            last_emit = 0
-            with open(TAR_PATH, mode) as f:
-                async for chunk in resp.aiter_bytes(chunk_size=8 * 1024 * 1024):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total and downloaded - last_emit > 50 * 1024 * 1024:
-                        pct = 100 * downloaded / total
-                        await _emit(
-                            progress,
-                            f"Downloaded {downloaded / 1e9:.2f} / {total / 1e9:.2f} GB ({pct:.1f}%)",
-                            stage="download", pct=pct,
-                        )
-                        last_emit = downloaded
+        if TAR_PATH.exists() and expected:
+            current = TAR_PATH.stat().st_size
+            await _emit(
+                progress,
+                f"Found partial tar ({current / 1e9:.2f} / {expected / 1e9:.2f} GB) — will resume.",
+                stage="download",
+            )
 
-    await _emit(progress, f"Download complete: {TAR_PATH.stat().st_size / 1e9:.2f} GB", stage="download", pct=100.0)
+        attempt = 0
+        while attempt < max_retries:
+            attempt += 1
+            resume_from = TAR_PATH.stat().st_size if TAR_PATH.exists() else 0
+            headers = {"Range": f"bytes={resume_from}-"} if resume_from else {}
+
+            try:
+                async with client.stream("GET", MAIZE_PROTEOME_URL, headers=headers) as resp:
+                    if resp.status_code == 416:  # Requested Range Not Satisfiable → we already have it all
+                        await _emit(progress, "Server says we already have the full tar.", stage="download", pct=100.0)
+                        return TAR_PATH
+                    if resp.status_code not in (200, 206):
+                        raise RuntimeError(f"Download failed: HTTP {resp.status_code} {resp.reason_phrase}")
+
+                    # If we asked for a range but got 200, server ignored Range — restart from scratch
+                    if headers and resp.status_code == 200:
+                        await _emit(progress, "Server ignored Range header — restarting download from scratch.", stage="download")
+                        if TAR_PATH.exists():
+                            TAR_PATH.unlink()
+                        resume_from = 0
+
+                    total = int(resp.headers.get("content-length", 0)) + resume_from
+                    downloaded = resume_from
+                    last_emit = 0
+                    mode = "ab" if resume_from else "wb"
+                    with open(TAR_PATH, mode) as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=8 * 1024 * 1024):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total and downloaded - last_emit > 50 * 1024 * 1024:
+                                pct = 100 * downloaded / total
+                                await _emit(
+                                    progress,
+                                    f"Downloaded {downloaded / 1e9:.2f} / {total / 1e9:.2f} GB ({pct:.1f}%)",
+                                    stage="download", pct=pct,
+                                )
+                                last_emit = downloaded
+
+                # Got through the stream — validate final size
+                final_size = TAR_PATH.stat().st_size
+                if expected and abs(final_size - expected) > 1_000_000:
+                    raise RuntimeError(
+                        f"Download finished but size mismatch: got {final_size / 1e9:.2f} GB, "
+                        f"expected {expected / 1e9:.2f} GB. Will retry."
+                    )
+                await _emit(progress, f"Download complete: {final_size / 1e9:.2f} GB", stage="download", pct=100.0)
+                return TAR_PATH
+
+            except (httpx.RequestError, httpx.HTTPError, RuntimeError) as e:
+                if attempt >= max_retries:
+                    raise RuntimeError(
+                        f"AFDB download failed after {max_retries} attempts. Last error: "
+                        f"{type(e).__name__}: {e}"
+                    ) from e
+                await _emit(
+                    progress,
+                    f"Download attempt {attempt} failed ({type(e).__name__}: {str(e)[:120]}). "
+                    f"Retrying in 5s (attempt {attempt + 1}/{max_retries})…",
+                    stage="download",
+                )
+                await asyncio.sleep(5)
+
+    # Unreachable but keeps the type checker happy
     return TAR_PATH
 
 
@@ -165,7 +230,24 @@ async def extract_and_decompress(progress: Optional[ProgressCB] = None) -> int:
     def _extract():
         with tarfile.open(TAR_PATH) as tar:
             tar.extractall(PDB_DIR)
-    await asyncio.to_thread(_extract)
+    try:
+        await asyncio.to_thread(_extract)
+    except tarfile.ReadError as e:
+        # The tar was truncated — almost certainly a half-downloaded file. Delete it
+        # so the NEXT call to download_proteome starts fresh.
+        size = TAR_PATH.stat().st_size if TAR_PATH.exists() else 0
+        await _emit(
+            progress,
+            f"Tar archive is corrupt/truncated ({size / 1e9:.2f} GB on disk, "
+            f"{e}). Removing the broken tar so the next run will re-download cleanly.",
+            stage="error",
+        )
+        if TAR_PATH.exists():
+            TAR_PATH.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Tar extraction failed ({e}). The partial download has been removed; "
+            f"re-run the install to download cleanly."
+        ) from e
 
     await _emit(progress, "Gunzipping PDB models and pruning non-PDB files...", stage="extract", pct=40.0)
 
