@@ -399,6 +399,40 @@ a.gene-link:hover {
     font-size: 0.85rem;
     margin-left: 2px;
 }
+/* Legacy v3 (GRMZM2G*) and v4 (Zm00001d*) IDs surfaced as inline chips */
+.gene-legacy-id {
+    background: rgba(148, 163, 184, 0.15);
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    margin-left: 4px;
+    border: 1px dashed rgba(148, 163, 184, 0.3);
+}
+/* Phytozome description shown alongside Gramene label */
+.gene-phytozome-desc {
+    color: #93c5fd;
+    font-size: 0.78rem;
+    margin-left: 6px;
+    font-style: italic;
+}
+/* External-link icon (Phytozome, etc.) next to gene chip */
+.ext-link-icon {
+    display: inline-block;
+    color: #93c5fd;
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-left: 4px;
+    padding: 0 4px;
+    border-radius: 3px;
+    transition: all 0.15s ease;
+}
+.ext-link-icon:hover {
+    background: rgba(147, 197, 253, 0.15);
+    color: #60a5fa;
+    transform: translateY(-1px);
+}
 .exec-top-gene-wrap a.gene-link {
     font-size: 1rem;
     padding: 4px 12px;

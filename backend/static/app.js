@@ -523,12 +523,15 @@ function buildEnrichmentRows(orthologs, data) {
     });
 }
 
-// ---------- Maize gene metadata helpers (Gramene-sourced; populated per pipeline run) ----------
-let _maizeGeneMeta = {};  // {gene_id: {symbol, description, synonyms, biotype}}
+// ---------- Maize gene metadata helpers (Gramene + Phytozome; per pipeline run) ----------
+let _maizeGeneMeta = {};       // Gramene: {gene_id: {symbol, description, synonyms, biotype}}
+let _phytozomeGeneMeta = {};   // Phytozome: {gene_id: {description, panther_ids, panther_descs}}
 
 function setMaizeGeneMeta(meta) { _maizeGeneMeta = meta || {}; }
+function setPhytozomeGeneMeta(meta) { _phytozomeGeneMeta = meta || {}; }
 
 function geneMeta(gene_id) { return _maizeGeneMeta[gene_id] || null; }
+function phytozomeMeta(gene_id) { return _phytozomeGeneMeta[gene_id] || null; }
 
 /**
  * Render a maize gene anchor: clickable badge linking to MaizeGDB, with the
@@ -538,19 +541,42 @@ function geneMeta(gene_id) { return _maizeGeneMeta[gene_id] || null; }
 function renderMaizeGeneLabel(gene_id, variant = 'badge', titleSuffix = '') {
     if (!gene_id) return '—';
     const m = geneMeta(gene_id);
+    const pz = phytozomeMeta(gene_id);
     const isPlaceholder = gene_id.startsWith('UNIPROT:');
     const url = isPlaceholder
         ? `https://www.maizegdb.org/search?query=${encodeURIComponent(gene_id.replace('UNIPROT:',''))}`
         : dbUrl.maizeGene(gene_id);
     const synList = m && m.synonyms && m.synonyms.length ? ` · synonyms: ${m.synonyms.join(', ')}` : '';
-    const title = `Open ${gene_id} in MaizeGDB${synList}${titleSuffix ? ' · ' + titleSuffix : ''}`;
+    const pzHint = pz && pz.panther_descs && pz.panther_descs.length
+        ? ` · Phytozome Panther: ${pz.panther_descs.slice(0, 2).join(', ')}` : '';
+    const title = `Open ${gene_id} in MaizeGDB${synList}${pzHint}${titleSuffix ? ' · ' + titleSuffix : ''}`;
     const idLink = `<a href="${url}" target="_blank" class="badge ${variant === 'badge' ? 'badge-gene' : ''} gene-link" title="${escapeHtmlAttr(title)}">${gene_id}</a>`;
-    if (!m) return idLink;
+
+    // Phytozome ↗ icon link — only when this gene has Phytozome data and is v5
+    const pzLink = (pz || (gene_id.startsWith('Zm00001eb')))
+        ? `<a href="https://phytozome-next.jgi.doe.gov/genePage/${encodeURIComponent(gene_id)}" target="_blank" class="ext-link-icon" title="Open in Phytozome (JGI)">⌬</a>` : '';
+
+    // v3/v4 synonym chips — show GRMZM2G* (v3) and Zm00001d* (v4) inline when present
+    let legacyChips = '';
+    if (m && m.synonyms) {
+        for (const s of m.synonyms) {
+            if (/^GRMZM/.test(s) || /^Zm00001d/.test(s)) {
+                legacyChips += `<span class="gene-legacy-id" title="Legacy maize gene ID">${s}</span>`;
+            }
+        }
+    }
+
+    if (!m) return `${idLink}${pzLink}${legacyChips}`;
     const sym = m.symbol || '';
     const desc = m.description || '';
-    if (!sym && !desc) return idLink;
-    const label = sym && desc ? `${sym} — ${desc}` : (sym || desc);
-    return `${idLink}<span class="gene-meta-label" title="${escapeHtmlAttr(synList ? synList.slice(3) : '')}">${escapeHtml(label)}</span>`;
+    const labelStr = sym && desc ? `${sym} — ${desc}` : (sym || desc);
+    const labelHtml = labelStr ? `<span class="gene-meta-label">${escapeHtml(labelStr)}</span>` : '';
+    // Append Phytozome description as a secondary line if it adds info Gramene's description didn't
+    let pzExtra = '';
+    if (pz && pz.description && pz.description !== desc) {
+        pzExtra = `<span class="gene-phytozome-desc" title="From Phytozome (JGI)">${escapeHtml(pz.description.slice(0, 90))}${pz.description.length > 90 ? '…' : ''}</span>`;
+    }
+    return `${idLink}${pzLink}${labelHtml}${legacyChips}${pzExtra}`;
 }
 
 function escapeHtmlAttr(s) {
@@ -945,6 +971,7 @@ function renderResults(data) {
     dashboard.innerHTML = '';
 
     setMaizeGeneMeta(data.maize_gene_metadata || {});
+    setPhytozomeGeneMeta(data.phytozome_metadata || {});
 
     // Build the per-ortholog enrichment rows once; the lane sections and summary share them.
     const allRowsPrecomputed = buildEnrichmentRows(data.orthologs || [], data);

@@ -129,6 +129,7 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
     domain_by_gene   = {d["maize_gene_model"]: d for d in (res.get("domain_targets") or [])}
     advanced_by_gene = {a["maize_gene_model"]: a for a in (res.get("advanced_homology_targets") or [])}
     gene_meta_map    = res.get("maize_gene_metadata") or {}
+    phytozome_map    = res.get("phytozome_metadata") or {}
 
     # CornCyc per-gene annotation index (gene → {pathway_ids, pathway_names, reactions, ec})
     cc_ann = res.get("corncyc_annotation") or {}
@@ -182,11 +183,23 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
 
         meta = gene_meta_map.get(gene) or {}
         cc_ev = cc_gene_index.get(gene) or {}
+        pz = phytozome_map.get(gene) or {}
+        # Split Gramene synonyms by version family so the CSV can be filtered cleanly.
+        all_syns = meta.get("synonyms", []) or []
+        v3_ids = [s for s in all_syns if s.startswith("GRMZM")]
+        v4_ids = [s for s in all_syns if s.startswith("Zm00001d")]
+        other_syns = [s for s in all_syns if s not in v3_ids and s not in v4_ids]
         rows.append({
             "gene": gene,
             "gene_symbol":      meta.get("symbol", ""),
             "gene_description": meta.get("description", ""),
-            "gene_synonyms":    meta.get("synonyms", []),
+            "gene_synonyms":    all_syns,
+            "gene_v3_ids":      v3_ids,        # legacy v3 NAM (GRMZM2G*)
+            "gene_v4_ids":      v4_ids,        # legacy v4 NAM (Zm00001d*)
+            "gene_other_synonyms": other_syns, # community names like 'sudh4'
+            "phytozome_description":   pz.get("description", ""),
+            "phytozome_panther_ids":   pz.get("panther_ids", []),
+            "phytozome_panther_descs": pz.get("panther_descs", []),
             "consensus_class": cls,
             "sources": sources,
             "num_sources": len(sources),
@@ -722,7 +735,13 @@ def generate_csv_report(results: List[Dict]) -> str:
         "maize_gene_model", "maize_gene_url",
         "gene_symbol",        # e.g. "SDH1_0" (Gramene/Ensembl Plants display_name)
         "gene_description",   # e.g. "succinate dehydrogenase4"
-        "gene_synonyms",      # pipe-separated, e.g. "GRMZM2G079888|Zm00001d007966|sudh4"
+        "gene_synonyms",      # pipe-separated union of v3+v4+community names
+        "gene_v3_ids",        # legacy NAM v3 IDs (GRMZM2G*), pipe-separated
+        "gene_v4_ids",        # legacy NAM v4 IDs (Zm00001d*), pipe-separated
+        "gene_other_synonyms",# community names (e.g. 'sudh4'), pipe-separated
+        # Phytozome (JGI BioMart) — independent KEGG-KO description + Panther family
+        "phytozome_description", "phytozome_panther_ids", "phytozome_panther_descs",
+        "phytozome_url",
         "consensus_class",                  # consensus | sequence_only | structure_only
         "discovery_sources",                # pipe-separated
         "num_sources", "consensus_score",
@@ -790,7 +809,9 @@ def generate_csv_report(results: List[Dict]) -> str:
                 0, 0, 0, 0, 0, 0,                                          # +num_curated_only
                 cc_compound_ids, cc_n_pathways, cc_top_pathway, cc_pathway_list,  # CornCyc query-level
                 rxn_rhea, rxn_eq, rxn_ec, rxn_type, pw_name, pw_id, pw_summary,
-                "", "", "", "", "", "", "", "", "", 0, 0,
+                "", "", "", "", "", "", "", "", "", 0, 0,    # rank/maize/symbol/desc/synonyms/lane
+                "", "", "",                                    # v3, v4, other synonyms
+                "", "", "", "",                                # phytozome description/panther_ids/panther_descs/url
                 "", "",
                 "", "",
                 "", "", "", "", "",       # enriched, enrichment_kind, plddt, n_expression_experiments, expression_experiment_ids
@@ -824,6 +845,13 @@ def generate_csv_report(results: List[Dict]) -> str:
                 gene, url_maize_gene(gene) if gene else "",
                 r.get("gene_symbol", ""), r.get("gene_description", ""),
                 "|".join(r.get("gene_synonyms", []) or []),
+                "|".join(r.get("gene_v3_ids", []) or []),
+                "|".join(r.get("gene_v4_ids", []) or []),
+                "|".join(r.get("gene_other_synonyms", []) or []),
+                r.get("phytozome_description", ""),
+                "|".join(r.get("phytozome_panther_ids", []) or []),
+                "|".join(r.get("phytozome_panther_descs", []) or []),
+                f"https://phytozome-next.jgi.doe.gov/genePage/{gene}" if gene.startswith("Zm00001eb") else "",
                 cls,
                 "|".join(r["sources"]),
                 r["num_sources"], r["consensus_score"],

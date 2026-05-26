@@ -117,6 +117,7 @@ async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dic
     # maize gene ID surfaced anywhere in the pipeline. Powers the
     # "Zm00001eb117970 · sdh4 — succinate dehydrogenase4" labels in the UI/reports.
     from maize_gene_meta import fetch_maize_gene_meta_batch
+    from phytozome_lookup import fetch_phytozome_meta_batch
     unique_gene_ids = set()
     for o in orthologs:                  unique_gene_ids.add(o.maize_gene_model)
     for t in targets:                    unique_gene_ids.add(t.maize_gene_model)
@@ -140,6 +141,24 @@ async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dic
             status="success" if n_named else "warning",
             hits=n_named,
             message=f"{n_named}/{len(unique_gene_ids)} maize genes resolved{sample_label}",
+        ))
+
+    # Phytozome (JGI BioMart) — independent gene-family + KEGG-KO descriptions.
+    # One batched POST per pipeline run; degrades silently if Phytozome is down.
+    phytozome_metadata = await fetch_phytozome_meta_batch(unique_gene_ids)
+    if phytozome_metadata:
+        n_panther = sum(1 for v in phytozome_metadata.values() if v.get("panther_descs"))
+        execution_logs.append(ExecutionLogEntry(
+            phase=4, database="Phytozome (JGI BioMart)",
+            status="success", hits=len(phytozome_metadata),
+            message=f"Phytozome annotation: {len(phytozome_metadata)} maize genes "
+                    f"({n_panther} with Panther family). Source: phytozome-next.jgi.doe.gov",
+        ))
+    else:
+        execution_logs.append(ExecutionLogEntry(
+            phase=4, database="Phytozome (JGI BioMart)",
+            status="info", hits=0,
+            message="No Phytozome annotation returned (BioMart may be unreachable or genes not v5 NAM IDs).",
         ))
 
     # CornCyc pathway annotation for the resolved compound — flows into the
@@ -171,6 +190,7 @@ async def _run_pipeline_core(input_data: MetaboliteInput, execution_logs) -> dic
         "domain_targets": [d.model_dump() for d in domain_targets],
         "advanced_homology_targets": [a.model_dump() for a in advanced_homology_targets],
         "maize_gene_metadata": maize_gene_metadata,
+        "phytozome_metadata": phytozome_metadata,
         "corncyc_annotation": corncyc_annotation,
         "execution_logs": [l.model_dump() for l in execution_logs]
     }

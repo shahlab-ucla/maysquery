@@ -215,17 +215,40 @@ Tunable: `compara_max_orthologs_per_target` (default 10).
 
 ### Final step — maize gene metadata enrichment
 
-After all phases complete, a single batched call to Gramene's search API
-resolves every unique maize gene ID surfaced anywhere in the response to a
-human-readable label:
+After all phases complete, two batched API calls enrich every unique maize
+gene ID surfaced in the response with readable labels and independent
+annotation sources.
 
-- `symbol` — e.g. `SDH1_0`
+**Gramene Search API** (`data.gramene.org/search`) — for each gene returns:
+
+- `symbol` — e.g. `SDH1_0` (Ensembl Plants display name)
 - `description` — e.g. `succinate dehydrogenase4`
-- `synonyms` — legacy IDs + maize-community-style symbols (e.g. `sudh4`,
-  `GRMZM2G079888`, `Zm00001d007966`)
+- `synonyms` — list including legacy NAM v3 IDs (`GRMZM2G*`), v4 IDs
+  (`Zm00001d*`), and maize-community-style symbols (e.g. `sudh4`). These
+  are also broken out into separate `gene_v3_ids` / `gene_v4_ids` /
+  `gene_other_synonyms` columns in the CSV so older datasets can be
+  matched on legacy identifiers.
 
-These flow into the UI, CSV, and HTML report — so every `Zm00001eb*` ID is
-shown alongside its readable label and synonyms.
+The active pipeline always operates in v5 NAM (`Zm00001eb*`) — every
+ortholog API and CornCyc 13.0 use v5 — so v3/v4 IDs are surfaced for
+*display and cross-reference* but never used as keys in the consensus
+reducer. The UI shows legacy IDs as small grey chips next to the v5 gene
+label when present, and the per-gene title tooltip lists every synonym.
+
+**Phytozome (JGI BioMart)** — one batched POST against
+`phytozome-next.jgi.doe.gov/biomart/martservice` returns for each gene:
+
+- `description` — JGI's KEGG-KO-anchored description (e.g.
+  `K00234 - succinate dehydrogenase (ubiquinone) flavoprotein subunit`)
+- `panther_ids` + `panther_descs` — Panther family classification, an
+  independent perspective from Pfam (e.g. `PTHR11632:SF88 — FAD_BINDING_2
+  DOMAIN-CONTAINING PROTEIN`)
+
+Each gene chip in the UI also grows a `⌬` icon linking out to the gene's
+canonical Phytozome page (`phytozome-next.jgi.doe.gov/genePage/<id>`)
+where JBrowse, synteny views, and full family trees are available.
+Phytozome is anonymous — no account required — and gracefully degrades
+if BioMart is unreachable.
 
 ---
 
