@@ -47,25 +47,66 @@ REPO_ROOT = BACKEND_DIR.parent
 DEFAULT_CORNCYC_ROOT = Path(os.environ.get("CORNCYC_DIR", REPO_ROOT / "corncyc"))
 
 
+def _is_corncyc_data_dir(d: Path) -> bool:
+    """Heuristic: a `data/` dir that contains the core PGDB flatfiles."""
+    if not d.is_dir():
+        return False
+    return all((d / fname).is_file() for fname in
+               ("compounds.dat", "reactions.dat", "pathways.dat", "proteins.dat"))
+
+
 def _detect_data_dir() -> Optional[Path]:
-    """Find a usable `<root>/<version>/data/` directory."""
+    """
+    Locate a CornCyc `data/` directory. Tolerates several common layouts so
+    users don't have to massage the PMN extraction into one canonical form:
+
+      <root>/<version>/data/         ← native PMN tar layout (preferred)
+      <root>/default-version + data  ← uses default-version file
+      <root>/data/                   ← user already cd'd into a version dir
+      <root>/corncyc-<ver>/data/     ← variant naming from some tarballs
+      <root>/corncyc/<ver>/data/     ← double-nested ("corncyc/corncyc/...")
+
+    Honours the version named in `<root>/default-version` when present;
+    otherwise picks the lexically-latest versioned subdirectory.
+    """
     root = DEFAULT_CORNCYC_ROOT
     if not root.is_dir():
         return None
-    # Prefer the version named in `default-version`
+
+    # 1. <root>/default-version → <root>/<that-version>/data
     default_file = root / "default-version"
     if default_file.is_file():
         version = default_file.read_text(encoding="utf-8").strip()
         candidate = root / version / "data"
-        if candidate.is_dir():
+        if _is_corncyc_data_dir(candidate):
             return candidate
-    # Otherwise pick the lexically-latest versioned subdir
-    versions = sorted(
-        (p for p in root.iterdir() if p.is_dir() and (p / "data").is_dir()),
-        key=lambda p: p.name,
-        reverse=True,
-    )
-    return (versions[0] / "data") if versions else None
+
+    # 2. <root>/data/                 (user extracted into a version dir already)
+    if _is_corncyc_data_dir(root / "data"):
+        return root / "data"
+
+    # 3. Any direct subdir with a populated data/
+    matches = []
+    for sub in root.iterdir():
+        if not sub.is_dir():
+            continue
+        if _is_corncyc_data_dir(sub / "data"):
+            matches.append(sub / "data")
+
+    # 4. One more hop down (handles `corncyc/corncyc/<ver>/data/` and similar)
+    if not matches:
+        for sub in root.iterdir():
+            if not sub.is_dir():
+                continue
+            for sub2 in sub.iterdir():
+                if sub2.is_dir() and _is_corncyc_data_dir(sub2 / "data"):
+                    matches.append(sub2 / "data")
+
+    if not matches:
+        return None
+    # Pick the lexically-latest by the version-bearing parent dir name
+    matches.sort(key=lambda p: p.parent.name, reverse=True)
+    return matches[0]
 
 
 def is_available() -> bool:
