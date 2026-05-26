@@ -104,6 +104,12 @@ class OrthologMapping(BaseModel):
     similarity_score: float
     sources: List[str] = []
     consensus_score: int = 1
+    # Per-source provenance: each producer (Ensembl, Foldseek, CornCyc, ...) writes
+    # one entry here so the CSV / reports can show *which method found this gene
+    # with what evidence*. Values are method-specific small dicts — see
+    # phase4.py / phase4_5.py / corncyc_lookup.py for the keys each populates.
+    # Backward-compatible default of empty dict means older callers still work.
+    source_evidence: dict = Field(default_factory=dict)
 
 # Phase 5: Structural & Transcriptomic Validation
 class ValidatedTarget(BaseModel):

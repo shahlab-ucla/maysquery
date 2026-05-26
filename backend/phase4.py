@@ -125,6 +125,13 @@ async def query_ensembl_homology(uniprot_accession: str) -> List[OrthologMapping
                                 similarity_score=score,
                                 sources=["Ensembl"],
                                 consensus_score=1,
+                                source_evidence={"Ensembl": {
+                                    "method": "Ensembl Compara plants",
+                                    "query_species": species,
+                                    "query_gene": gid,
+                                    "pct_identity": score,
+                                    "ortholog_type": hom.get("type", "ortholog"),
+                                }},
                             ))
                 except Exception as e:
                     logger.warning(f"Ensembl homology call failed for {species}/{gid}: {e}")
@@ -184,6 +191,11 @@ async def query_plaza_homology(uniprot_accession: str) -> List[OrthologMapping]:
                             similarity_score=75.0,
                             sources=["PLAZA"],
                             consensus_score=1,
+                            source_evidence={"PLAZA": {
+                                "method": "PLAZA Monocots v5",
+                                "orthogroup": ortho.get("orthogroup", ""),
+                                "plaza_gene_id": plaza_gene_id,
+                            }},
                         ))
     except Exception as e:
         logger.error(f"Error querying PLAZA API: {e}")
@@ -231,6 +243,13 @@ async def query_biomart_homology(uniprot_accession: str) -> List[OrthologMapping
                             similarity_score=float(perc_id),
                             sources=["EnsemblPanHomology"],
                             consensus_score=1,
+                            source_evidence={"EnsemblPanHomology": {
+                                "method": "Ensembl pan-homology Compara",
+                                "query_species": species,
+                                "query_gene": gid,
+                                "pct_identity": float(perc_id),
+                                "ortholog_type": hom.get("type", "ortholog"),
+                            }},
                         ))
     except Exception as e:
         logger.error(f"Error querying Ensembl pan-homology: {e}")
@@ -341,21 +360,30 @@ async def execute_phase4(proteins: List[ProteinCandidate], input_data,
                 plaza_orthogroup=m.plaza_orthogroup,
                 similarity_score=m.similarity_score,
                 sources=m.sources.copy(),
-                consensus_score=1
+                consensus_score=1,
+                source_evidence=dict(m.source_evidence or {}),
             )
         else:
             current = merged_mappings[gene]
             for src in m.sources:
                 if src not in current.sources:
                     current.sources.append(src)
-            
+
             current.consensus_score = len(current.sources)
-            
+
             if m.similarity_score > current.similarity_score:
                 current.similarity_score = m.similarity_score
-                
+
             if current.plaza_orthogroup == "LIVE_ORTHO" and m.plaza_orthogroup != "LIVE_ORTHO":
                 current.plaza_orthogroup = m.plaza_orthogroup
+
+            # Merge per-source evidence dicts. Each producer writes one key (its
+            # source name) into source_evidence so later sources for the same
+            # gene don't clobber earlier ones — the reducer just unions the
+            # keys, preserving every method's score breakdown.
+            for src_key, ev in (m.source_evidence or {}).items():
+                if src_key not in current.source_evidence:
+                    current.source_evidence[src_key] = ev
                 
     final_list = list(merged_mappings.values())
     final_list.sort(key=lambda x: (x.consensus_score, x.similarity_score), reverse=True)
@@ -385,7 +413,7 @@ async def execute_phase4(proteins: List[ProteinCandidate], input_data,
                 message=f"phmmer {p.uniprot_accession} → {len(hits)} maize hits" + (f" (best E={hits[0]['e_value']:.1e})" if hits else "")
             ))
             for h in hits:
-                # Calculate a mock similarity score from the bit score for normalization
+                # Normalise bit score to a 0-100 scale for the unified similarity_score field
                 sim_score = min(100.0, (h["bit_score"] / 1000.0) * 100.0)
                 hmmer_hits.append(OrthologMapping(
                     query_uniprot_id=p.uniprot_accession,
@@ -393,7 +421,13 @@ async def execute_phase4(proteins: List[ProteinCandidate], input_data,
                     plaza_orthogroup=f"HMMER_E:{h['e_value']:.1e}",
                     similarity_score=sim_score,
                     sources=["Local_HMMER"],
-                    consensus_score=1
+                    consensus_score=1,
+                    source_evidence={"Local_HMMER": {
+                        "method": "Local HMMER (phmmer) vs Zm-NAM-5.0 proteome",
+                        "query_uniprot": p.uniprot_accession,
+                        "e_value": h["e_value"],
+                        "bit_score": h["bit_score"],
+                    }},
                 ))
         
         # Sort HMMER hits by similarity score

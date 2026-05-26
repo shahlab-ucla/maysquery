@@ -169,6 +169,14 @@ def corncyc_orthologs_for_chebi(chebi_id: str) -> List[OrthologMapping]:
             similarity_score=100.0,
             sources=[CORNCYC_SOURCE],
             consensus_score=1,
+            source_evidence={CORNCYC_SOURCE: {
+                "method": "CornCyc (PMN) curated annotation",
+                "pathway_ids":   g["pathways"],
+                "pathway_names": names,
+                "reactions":     g["reactions"],
+                "ec_numbers":    g["ec_numbers"],
+                "n_reactions":   g["n_reactions"],
+            }},
         ))
     return out
 

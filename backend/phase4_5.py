@@ -367,6 +367,17 @@ async def execute_phase4_5(
                 similarity_score=round(h["tm_score"] * 100, 1),
                 sources=["Foldseek-structural"],
                 consensus_score=1,
+                source_evidence={"Foldseek-structural": {
+                    "method": "Foldseek 3D structural alignment vs maize AlphaFold proteome",
+                    "query_uniprot": query_uniprot,
+                    "target_uniprot": t_uniprot,
+                    "qtm": qtm, "ttm": ttm,
+                    "tm_score": h["tm_score"],
+                    "prob": prob, "lddt": lddt,
+                    "rmsd": h.get("rmsd"),
+                    "evalue": h.get("evalue"),
+                    "alnlen": h.get("alnlen"),
+                }},
             ))
 
     logs.append(ExecutionLogEntry(

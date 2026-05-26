@@ -75,6 +75,17 @@ STRUCTURAL_SOURCE = "Foldseek-structural"
 CURATED_SOURCE    = "CornCyc"
 SEQUENCE_SOURCES  = {"Ensembl", "PLAZA", "BioMart", "EnsemblPanHomology", "Local_HMMER"}
 
+# All discovery sources we know how to report per-source columns for. Each pairs
+# with a short, human-readable description shown in the CSV's discovery_methods_summary.
+KNOWN_SOURCES = [
+    ("Ensembl",             "Ensembl Compara plants (sequence homology)"),
+    ("EnsemblPanHomology",  "Ensembl pan-homology Compara (cross-kingdom sequence)"),
+    ("PLAZA",               "PLAZA Monocots v5 (sequence homology)"),
+    ("Local_HMMER",         "Local HMMER (phmmer) vs Zm-NAM-5.0 proteome"),
+    ("Foldseek-structural", "Foldseek 3D structural alignment vs maize AlphaFold proteome"),
+    ("CornCyc",             "CornCyc (Plant Metabolic Network) curated maize annotation"),
+]
+
 
 def classify_ortholog(sources: List[str]) -> str:
     """
@@ -189,6 +200,32 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
         v3_ids = [s for s in all_syns if s.startswith("GRMZM")]
         v4_ids = [s for s in all_syns if s.startswith("Zm00001d")]
         other_syns = [s for s in all_syns if s not in v3_ids and s not in v4_ids]
+        source_ev = o.get("source_evidence") or {}
+        # Human-readable summary like: "Ensembl Compara plants (82.5% id, ortholog_one2one);
+        #   Foldseek 3D (qTM=0.91 tTM=0.88 prob=0.97); CornCyc curated (3 reactions, 2 pathways)"
+        methods_summary_parts = []
+        for src_key, src_label in KNOWN_SOURCES:
+            ev = source_ev.get(src_key)
+            if not ev:
+                continue
+            detail = ""
+            if src_key in ("Ensembl", "EnsemblPanHomology"):
+                detail = f"{ev.get('pct_identity', 0):.1f}% id, {ev.get('ortholog_type','ortholog')}"
+            elif src_key == "Local_HMMER":
+                detail = f"E={ev.get('e_value','?'):.1e}, bit={ev.get('bit_score','?')}"
+            elif src_key == "Foldseek-structural":
+                bits = []
+                if ev.get("qtm") is not None: bits.append(f"qTM={ev['qtm']:.2f}")
+                if ev.get("ttm") is not None: bits.append(f"tTM={ev['ttm']:.2f}")
+                if ev.get("prob") is not None: bits.append(f"prob={ev['prob']:.2f}")
+                detail = " ".join(bits)
+            elif src_key == "PLAZA":
+                detail = f"orthogroup={ev.get('orthogroup','?')}"
+            elif src_key == "CornCyc":
+                detail = f"{ev.get('n_reactions','?')} reactions, {len(ev.get('pathway_ids',[]))} pathways"
+            methods_summary_parts.append(f"{src_label} ({detail})" if detail else src_label)
+        methods_summary = " ; ".join(methods_summary_parts)
+
         rows.append({
             "gene": gene,
             "gene_symbol":      meta.get("symbol", ""),
@@ -200,6 +237,9 @@ def join_enrichment(orthologs: List[Dict], res: Dict) -> List[Dict]:
             "phytozome_description":   pz.get("description", ""),
             "phytozome_panther_ids":   pz.get("panther_ids", []),
             "phytozome_panther_descs": pz.get("panther_descs", []),
+            # Full per-source evidence dict (preserved as JSON-like for advanced users)
+            "source_evidence":      source_ev,
+            "methods_summary":      methods_summary,
             "consensus_class": cls,
             "sources": sources,
             "num_sources": len(sources),
@@ -599,7 +639,7 @@ footer { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top
         {% for r in rows %}
             <tr class="row-{{ r.consensus_class }}">
                 <td><span class="badge badge-{{ r.consensus_class }}">{{ lane_label(r.consensus_class) }}</span></td>
-                <td>{{ gene_label(r.gene, res.maize_gene_metadata)|safe }}<div class="dim mono" style="font-size:0.72rem;">{% for s in r.sources %}{{ s }}{% if not loop.last %} · {% endif %}{% endfor %}</div></td>
+                <td>{{ gene_label(r.gene, res.maize_gene_metadata)|safe }}<div class="dim mono" style="font-size:0.72rem;">{% for s in r.sources %}{{ s }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% if r.methods_summary %}<div class="dim" style="font-size:0.7rem; margin-top:2px; line-height:1.3;">{{ r.methods_summary }}</div>{% endif %}</td>
                 <td>{% if r.query_uniprot_id %}<a href="{{ url_uniprot(r.query_uniprot_id) }}" target="_blank">{{ r.query_uniprot_id }}</a>{% else %}—{% endif %}</td>
                 <td class="mono"><b>{% if r.structural_tm_score is not none %}{{ '%.2f'|format(r.structural_tm_score) }}{% else %}—{% endif %}</b></td>
                 <td class="mono">{% if r.sequence_similarity is not none %}{{ '%.1f'|format(r.sequence_similarity) }}{% else %}—{% endif %}</td>
@@ -742,9 +782,24 @@ def generate_csv_report(results: List[Dict]) -> str:
         # Phytozome (JGI BioMart) — independent KEGG-KO description + Panther family
         "phytozome_description", "phytozome_panther_ids", "phytozome_panther_descs",
         "phytozome_url",
-        "consensus_class",                  # consensus | sequence_only | structure_only
-        "discovery_sources",                # pipe-separated
+        "consensus_class",                  # consensus | sequence_only | structure_only | curated_only
+        "discovery_sources",                # pipe-separated short source names
         "num_sources", "consensus_score",
+        "methods_summary",                  # human-readable, includes per-method evidence
+        # Boolean (yes/no) columns per discovery method — one-click spreadsheet filter
+        "found_by_ensembl_compara",
+        "found_by_ensembl_panhomology",
+        "found_by_plaza",
+        "found_by_local_hmmer",
+        "found_by_foldseek_structural",
+        "found_by_corncyc_curated",
+        # Per-method evidence detail (only populated for methods that found this gene)
+        "ensembl_compara_pct_id", "ensembl_compara_ortholog_type",
+        "panhomology_pct_id",     "panhomology_ortholog_type",
+        "plaza_orthogroup_id",
+        "hmmer_e_value", "hmmer_bit_score",
+        "foldseek_qtm", "foldseek_ttm", "foldseek_prob", "foldseek_lddt", "foldseek_target_uniprot",
+        "corncyc_n_reactions_for_gene",
         # Query pan-life protein
         "query_uniprot_id", "query_uniprot_url",
         # Sequence-lane evidence
@@ -812,6 +867,12 @@ def generate_csv_report(results: List[Dict]) -> str:
                 "", "", "", "", "", "", "", "", "", 0, 0,    # rank/maize/symbol/desc/synonyms/lane
                 "", "", "",                                    # v3, v4, other synonyms
                 "", "", "", "",                                # phytozome description/panther_ids/panther_descs/url
+                "",                                            # methods_summary
+                "no", "no", "no", "no", "no", "no",            # found_by_* booleans
+                "", "", "", "", "",                            # ensembl, panhomology, plaza per-method evidence
+                "", "",                                        # hmmer e_value + bit_score
+                "", "", "", "", "",                            # foldseek qtm/ttm/prob/lddt/target_uniprot
+                "",                                            # corncyc n_reactions
                 "", "",
                 "", "",
                 "", "", "", "", "",       # enriched, enrichment_kind, plddt, n_expression_experiments, expression_experiment_ids
@@ -855,6 +916,23 @@ def generate_csv_report(results: List[Dict]) -> str:
                 cls,
                 "|".join(r["sources"]),
                 r["num_sources"], r["consensus_score"],
+                r.get("methods_summary", ""),
+                # Boolean per-method columns
+                *[("yes" if src_key in r["sources"] else "no") for src_key, _ in KNOWN_SOURCES],
+                # Per-method evidence detail — pull straight from source_evidence dict
+                (lambda ev: ev.get("pct_identity", "") if ev else "")(r.get("source_evidence", {}).get("Ensembl")),
+                (lambda ev: ev.get("ortholog_type", "") if ev else "")(r.get("source_evidence", {}).get("Ensembl")),
+                (lambda ev: ev.get("pct_identity", "") if ev else "")(r.get("source_evidence", {}).get("EnsemblPanHomology")),
+                (lambda ev: ev.get("ortholog_type", "") if ev else "")(r.get("source_evidence", {}).get("EnsemblPanHomology")),
+                (lambda ev: ev.get("orthogroup", "") if ev else "")(r.get("source_evidence", {}).get("PLAZA")),
+                (lambda ev: ev.get("e_value", "") if ev else "")(r.get("source_evidence", {}).get("Local_HMMER")),
+                (lambda ev: ev.get("bit_score", "") if ev else "")(r.get("source_evidence", {}).get("Local_HMMER")),
+                (lambda ev: ev.get("qtm", "") if ev else "")(r.get("source_evidence", {}).get("Foldseek-structural")),
+                (lambda ev: ev.get("ttm", "") if ev else "")(r.get("source_evidence", {}).get("Foldseek-structural")),
+                (lambda ev: ev.get("prob", "") if ev else "")(r.get("source_evidence", {}).get("Foldseek-structural")),
+                (lambda ev: ev.get("lddt", "") if ev else "")(r.get("source_evidence", {}).get("Foldseek-structural")),
+                (lambda ev: ev.get("target_uniprot", "") if ev else "")(r.get("source_evidence", {}).get("Foldseek-structural")),
+                (lambda ev: ev.get("n_reactions", "") if ev else "")(r.get("source_evidence", {}).get("CornCyc")),
                 quniprot, url_uniprot(quniprot) if quniprot else "",
                 ("" if r["sequence_similarity"] is None else round(r["sequence_similarity"], 2)),
                 ("" if r["structural_tm_score"] is None else round(r["structural_tm_score"], 3)),
